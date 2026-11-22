@@ -79,6 +79,28 @@ def init_db():
             display_name TEXT NOT NULL, url TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
 
+        # SITE paylaşımı için kullanıcı tarafından verilen başlangıç bağlantıları.
+        # Mevcut kayıtlar silinmez; aynı ad/kategori varsa üzerine yazılmaz.
+        site_links = [
+            ("site", "MASTERBETTING GİRİŞ", "https://zipt.to/y7BfPx"),
+            ("site", "BİZBET GİRİŞ", "https://bizbet-28601.pro/tr/registration?tag=d_5908901m_62079c_"),
+            ("social", "INSTAGRAM", "https://www.instagram.com/rodrianaliz?evlk=OHN3YjYzaHY5Mmlu"),
+            ("social", "X", "https://x.com/kralrodriguez?s=11"),
+            ("social", "THREADS", "https://www.threads.com/@rodrianaliz?igshid=NTc4MTIwNjQ2YQ=="),
+            ("social", "KICK", "https://kick.com/kralrodriguez"),
+        ]
+        for tid in ("altay_demo", "musteri_001"):
+            for category, display_name, url in site_links:
+                exists = c.execute(
+                    "SELECT 1 FROM link_items WHERE tenant_id=? AND display_name=? LIMIT 1",
+                    (tid, display_name)
+                ).fetchone()
+                if not exists:
+                    c.execute(
+                        "INSERT INTO link_items(tenant_id,category,display_name,url,enabled) VALUES(?,?,?,?,1)",
+                        (tid, category, display_name, url)
+                    )
+
         # Seed the test tenant and the customer's three channels idempotently.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
@@ -793,8 +815,18 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not rows:
             await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
             return
+        # Önce kullanıcının gönderdiği orijinal tanıtım görseli, altında bağlantı butonları.
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows])
-        await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
+        image_path = os.path.join(os.path.dirname(__file__), 'assets', 'rodri_site.jpg')
+        if os.path.isfile(image_path):
+            with open(image_path, 'rb') as photo:
+                await msg.reply_photo(
+                    photo=photo,
+                    caption='🔗 Giriş ve sosyal medya bağlantılarımız:',
+                    reply_markup=kb
+                )
+        else:
+            await msg.reply_text('🔗 Giriş ve sosyal medya bağlantılarımız:', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
