@@ -250,7 +250,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(aid, admin_text, reply_markup=kb)
                 except Exception:
                     log.exception('VIP başvurusu yöneticiye iletilemedi: %s', aid)
-            await update.message.reply_text('👑 VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
+            await update.message.reply_text(' VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
             return
         except Exception:
             log.exception('VIP derin bağlantısı işlenemedi')
@@ -262,7 +262,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = f"ALTAY VIP BOT'e hoş geldin, {user.first_name}!\nVIP üyelik başvurusu için aşağıdaki butona bas."
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👑 VIP Başvurusu", callback_data="apply")],
+        [InlineKeyboardButton(" VIP Başvurusu", callback_data="apply")],
         [InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status")],
         [InlineKeyboardButton("🆘 Destek", callback_data="support")],
     ])
@@ -414,7 +414,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
     elif q.data == "tenantpanel:roles":
         if admin(uid):
-            text = ("👑 Ana yönetici yetkin aktif.\n"
+            text = (" Ana yönetici yetkin aktif.\n"
                     "Tüm müşteri ve kanal kayıtlarını görüntüleyebilirsin.\n"
                     "Ana yönetici ID: " + str(uid))
         else:
@@ -591,7 +591,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ).fetchone()[0]
     await update.message.reply_text(
         "📊 ALTAY VIP İSTATİSTİK\n\n"
-        f"👑 Aktif VIP üye: {active}\n"
+        f" Aktif VIP üye: {active}\n"
         f"⏳ Bekleyen başvuru: {pending}\n"
         f"✅ Onaylanan başvuru: {approved}\n"
         f"❌ Reddedilen başvuru: {rejected}\n"
@@ -820,34 +820,18 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         site_rows = [r for r in rows if (r['category'] or '').casefold() == 'site']
         social_rows = [r for r in rows if (r['category'] or '').casefold() != 'site']
 
-        brand_icons = {
-            'instagram': '📸',
-            'x': '𝕏',
-            'threads': '🧵',
-            'kick': '🟢',
-        }
-
         def make_button(row):
-            label = row['display_name'].strip().upper()
-            normalized = label.casefold()
-            icon = '✨'
-            for brand, symbol in brand_icons.items():
-                if brand in normalized:
-                    icon = symbol
-                    break
-            if 'masterbetting' in normalized or 'bizbet' in normalized:
-                icon = '👑'
-            return InlineKeyboardButton(f'✦ {icon} {label} ✦', url=row['url'])
+            # Butonlarda yalnızca bağlantı adı gösterilir; simge/dekoratif karakter yok.
+            label = row['display_name'].strip()
+            return InlineKeyboardButton(label, url=row['url'])
 
         keyboard_rows = []
-        # İlk iki site butonu ayrı satırlarda.
+        # Her buton tek satırda: Telegram mevcut satır genişliğini kullanarak
+        # butonu mümkün olduğunca tam genişlikte gösterir.
         for row in site_rows:
             keyboard_rows.append([make_button(row)])
-        # Sosyal medya butonları ikişerli: toplam dört buton 2x2.
-        social_buttons = [make_button(r) for r in social_rows[:4]]
-        keyboard_rows.extend(
-            [social_buttons[i:i + 2] for i in range(0, len(social_buttons), 2)]
-        )
+        for row in social_rows[:4]:
+            keyboard_rows.append([make_button(row)])
         kb = InlineKeyboardMarkup(keyboard_rows)
         with connect() as c:
             setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='site_photo_file_id'",
@@ -865,7 +849,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat.type == 'channel' or not update.effective_user:
             bot_username = context.bot.username
             deep_link = f"https://t.me/{bot_username}?start=vipc_{chat.id}"
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton('👑 VIP Başvurusu', url=deep_link)]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(' VIP Başvurusu', url=deep_link)]])
             await msg.reply_text('VIP başvurusu yapmak için aşağıdaki butona dokun:', reply_markup=kb)
             return
         user = update.effective_user
@@ -883,7 +867,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             app_id = cur.lastrowid
         # Do not post application details or acknowledgement in the public group.
         try:
-            await context.bot.send_message(user.id, '👑 VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
+            await context.bot.send_message(user.id, ' VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
         except Exception:
             log.info('Başvuru alındı; kullanıcı botu başlatmadığı için DM gönderilemedi: %s', user.id)
         kb = InlineKeyboardMarkup([[
