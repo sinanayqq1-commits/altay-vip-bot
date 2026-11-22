@@ -188,7 +188,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
     if context.args and context.args[0].startswith("vip_"):
         try:
-            _, tenant_id, channel_id_text = context.args[0].split("_", 2)
+            payload = context.args[0][len("vip_"):]
+            tenant_id, channel_id_text = payload.rsplit("_", 1)
             channel_id_value = int(channel_id_text)
             channel_row = tenant_for_channel(channel_id_value)
             if not channel_row or channel_row[0] != tenant_id:
