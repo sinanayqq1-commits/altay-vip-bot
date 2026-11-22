@@ -814,11 +814,12 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
             return
 
-        # Buton düzeni: site girişleri üstte yan yana, sosyal medya altta ikili.
-        # Telegram butonlarında özel arka plan rengi/logo desteklenmediği için
-        # ayırt edici marka simgeleri ve kısa adlar kullanılır.
+        # VIP görünüm: site girişleri alt alta, sosyal medya dört buton (2x2).
+        # Telegram Bot API inline butonlarda arka plan/font rengini değiştirmeye izin vermez.
+        # Altın görünüm, kısa büyük harfli etiketler ve altın simgelerle verilir.
         site_rows = [r for r in rows if (r['category'] or '').casefold() == 'site']
         social_rows = [r for r in rows if (r['category'] or '').casefold() != 'site']
+
         brand_icons = {
             'instagram': '📸',
             'x': '𝕏',
@@ -827,21 +828,23 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         def make_button(row):
-            label = row['display_name'].strip()
+            label = row['display_name'].strip().upper()
             normalized = label.casefold()
-            icon = '🔗'
+            icon = '✨'
             for brand, symbol in brand_icons.items():
                 if brand in normalized:
                     icon = symbol
                     break
             if 'masterbetting' in normalized or 'bizbet' in normalized:
-                icon = '🌐'
-            return InlineKeyboardButton(f'{icon} {label}', url=row['url'])
+                icon = '👑'
+            return InlineKeyboardButton(f'✦ {icon} {label} ✦', url=row['url'])
 
         keyboard_rows = []
-        if site_rows:
-            keyboard_rows.append([make_button(r) for r in site_rows])
-        social_buttons = [make_button(r) for r in social_rows]
+        # İlk iki site butonu ayrı satırlarda.
+        for row in site_rows:
+            keyboard_rows.append([make_button(row)])
+        # Sosyal medya butonları ikişerli: toplam dört buton 2x2.
+        social_buttons = [make_button(r) for r in social_rows[:4]]
         keyboard_rows.extend(
             [social_buttons[i:i + 2] for i in range(0, len(social_buttons), 2)]
         )
@@ -853,7 +856,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if photo_id:
             await msg.reply_photo(photo=photo_id, caption='🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
         else:
-            await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
+            await msg.reply_text('✨ **RODRI VIP BAĞLANTILARI** ✨', parse_mode='Markdown', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
