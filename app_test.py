@@ -805,42 +805,16 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tenant_id, channel_name, channel_type = channel
     body = msg.text.strip()
 
-    # SITE/SİTE yalnızca müşteri sohbet kanalında tam mesaj olarak çalışır.
+    # SITE/SİTE: Yayındaki RODRI VIP bağlantı sayfasını tek butonla açar.
     if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
-        with connect() as c:
-            rows = c.execute("""SELECT category,display_name,url FROM link_items
-                WHERE tenant_id=? AND enabled=1 ORDER BY category,link_id""", (tenant_id,)).fetchall()
-        if not rows:
-            await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
-            return
-
-        # VIP görünüm: site girişleri alt alta, sosyal medya dört buton (2x2).
-        # Telegram Bot API inline butonlarda arka plan/font rengini değiştirmeye izin vermez.
-        # Altın görünüm, kısa büyük harfli etiketler ve altın simgelerle verilir.
-        site_rows = [r for r in rows if (r['category'] or '').casefold() == 'site']
-        social_rows = [r for r in rows if (r['category'] or '').casefold() != 'site']
-
-        def make_button(row):
-            # Butonlarda yalnızca bağlantı adı gösterilir; simge/dekoratif karakter yok.
-            label = row['display_name'].strip()
-            return InlineKeyboardButton(label, url=row['url'])
-
-        keyboard_rows = []
-        # Her buton tek satırda: Telegram mevcut satır genişliğini kullanarak
-        # butonu mümkün olduğunca tam genişlikte gösterir.
-        for row in site_rows:
-            keyboard_rows.append([make_button(row)])
-        for row in social_rows[:4]:
-            keyboard_rows.append([make_button(row)])
-        kb = InlineKeyboardMarkup(keyboard_rows)
-        with connect() as c:
-            setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='site_photo_file_id'",
-                                 (tenant_id,)).fetchone()
-        photo_id = setting['setting_value'] if setting else None
-        if photo_id:
-            await msg.reply_photo(photo=photo_id, caption='🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
-        else:
-            await msg.reply_text('✨ **RODRI VIP BAĞLANTILARI** ✨', parse_mode='Markdown', reply_markup=kb)
+        page_url = "https://sinanayqq1-commits.github.io/altay-vip-links/"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("RODRİ VIP BAĞLANTILAR", url=page_url)
+        ]])
+        await msg.reply_text(
+            "✨ RODRİ VIP bağlantı sayfamız:",
+            reply_markup=kb
+        )
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
