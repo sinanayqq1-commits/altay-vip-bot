@@ -186,14 +186,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     # Kanal VIP butonundan gelen derin bağlantı: başvuru özel sohbette alınır,
     # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
-    if context.args and context.args[0].startswith("vip_"):
+    if context.args and (context.args[0].startswith("vipc_") or context.args[0].startswith("vip_")):
         try:
-            payload = context.args[0][len("vip_"):]
-            tenant_id, channel_id_text = payload.rsplit("_", 1)
-            channel_id_value = int(channel_id_text)
+            # Yeni bağlantı yalnızca kanal ID'sini taşır. Tenant ID'si veritabanından
+            # okunur; böylece eski INSERT OR IGNORE kanal kayıtları bağlantıyı bozmaz.
+            raw = context.args[0]
+            if raw.startswith("vipc_"):
+                channel_id_value = int(raw[len("vipc_"):])
+            else:
+                # Eski v7/v8 bağlantılarıyla geriye dönük uyumluluk.
+                payload = raw[len("vip_"):]
+                _, channel_id_text = payload.rsplit("_", 1)
+                channel_id_value = int(channel_id_text)
             channel_row = tenant_for_channel(channel_id_value)
-            if not channel_row or channel_row[0] != tenant_id:
-                raise ValueError("unknown tenant/channel")
+            if not channel_row:
+                raise ValueError("unknown channel")
+            tenant_id = channel_row[0]
             with connect() as c:
                 existing = c.execute("""SELECT application_id,status FROM tenant_applications
                     WHERE tenant_id=? AND channel_id=? AND user_id=?
@@ -790,7 +798,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if body.casefold() in ('!vip', 'vip'):
         if chat.type == 'channel' or not update.effective_user:
             bot_username = context.bot.username
-            deep_link = f"https://t.me/{bot_username}?start=vip_{tenant_id}_{chat.id}"
+            deep_link = f"https://t.me/{bot_username}?start=vipc_{chat.id}"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton('👑 VIP Başvurusu', url=deep_link)]])
             await msg.reply_text('VIP başvurusu yapmak için aşağıdaki butona dokun:', reply_markup=kb)
             return
