@@ -87,6 +87,10 @@ def init_db():
             (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,?)""",
             (-1004367177649, "altay_demo", "Deneme", "test", 8011205445, "active"))
+        # Deneme kanalını aynı zamanda altay_demo müşterisinin VIP hedef kanalı yap.
+        # channel_id PRIMARY KEY olduğu için ayrı kopya kayıt yerine mevcut satırın türü güncellenir.
+        c.execute("""UPDATE tenant_channels SET channel_type='vip', channel_name='Deneme VIP',
+            status='active' WHERE channel_id=? AND tenant_id='altay_demo'""", (-1004367177649,))
 
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
