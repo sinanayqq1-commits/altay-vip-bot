@@ -734,7 +734,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     body = msg.text.strip()
 
     # SITE/SİTE yalnızca müşteri sohbet kanalında tam mesaj olarak çalışır.
-    if body.upper() in ('SITE', 'SİTE') and channel_type == 'chat':
+    if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
         with connect() as c:
             rows = c.execute("""SELECT display_name,url FROM link_items
                 WHERE tenant_id=? AND enabled=1 ORDER BY category,link_id""", (tenant_id,)).fetchall()
@@ -748,13 +748,11 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # !Vip yalnızca müşteri Sohbet kanalında tam mesaj olarak başvuru açar.
     if body.casefold() == '!vip':
         user = update.effective_user
-        if channel_type != 'chat':
+        if channel_type not in ('chat', 'legacy'):
             return
         if chat.type == 'channel' or not user:
-            await msg.reply_text(
-                '👑 VIP başvurusu için lütfen Sohbet grubunda kendi hesabınla !Vip yaz. '
-                'Kanal gönderilerinde Telegram başvuran kişinin kullanıcı ID bilgisini paylaşmadığı için başvuru alınamıyor.'
-            )
+            # Yayın kanallarında gönderi sahibi bilgisi başvuru için güvenilir değildir.
+            # Kanalda !Vip komutunu sessizce yok say; VIP başvurusu Sohbet grubunda yapılır.
             return
         with connect() as c:
             existing = c.execute("""SELECT status FROM tenant_applications
