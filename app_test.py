@@ -79,6 +79,29 @@ def init_db():
             display_name TEXT NOT NULL, url TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
 
+        # SITE/SİTE yanıtında gösterilecek varsayılan bağlantılar.
+        # INSERT OR IGNORE yerine tenant + görünen ad kontrolü kullanılır:
+        # mevcut yöneticinin düzenlediği URL'ler deploy sırasında ezilmez.
+        default_links = [
+            ("site", "MASTERBETTING GİRİŞ", "https://zipt.to/y7BfPx"),
+            ("site", "BİZBET GİRİŞ", "https://bizbet-28601.pro/tr/registration?tag=d_5908901m_62079c_"),
+            ("social", "INSTAGRAM", "https://www.instagram.com/rodrianaliz?evlk=OHN3YjYzaHY5Mmlu"),
+            ("social", "X", "https://x.com/kralrodriguez?s=11"),
+            ("social", "THREADS", "https://www.threads.com/@rodrianaliz?igshid=NTc4MTIwNjQ2YQ=="),
+            ("social", "KICK", "https://kick.com/kralrodriguez"),
+        ]
+        for tenant_key in ("altay_demo", "musteri_001"):
+            for category, label, url in default_links:
+                exists = c.execute(
+                    "SELECT 1 FROM link_items WHERE tenant_id=? AND display_name=? LIMIT 1",
+                    (tenant_key, label)
+                ).fetchone()
+                if not exists:
+                    c.execute(
+                        "INSERT INTO link_items(tenant_id,category,display_name,url,enabled) VALUES(?,?,?,?,1)",
+                        (tenant_key, category, label, url)
+                    )
+
         # Seed the test tenant and the customer's three channels idempotently.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
@@ -794,20 +817,7 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
             return
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows])
-        # Tanıtım görseli pakette assets/rodri_site.jpg olarak bulunur.
-        # Dosya yolu çalışma dizinine bağlı kalmasın diye bu dosyanın konumundan hesaplanır.
-        from pathlib import Path
-        image_path = Path(__file__).resolve().parent / 'assets' / 'rodri_site.jpg'
-        if image_path.is_file():
-            with image_path.open('rb') as photo:
-                await context.bot.send_photo(
-                    chat_id=chat.id,
-                    photo=photo,
-                    caption='🔗 Site ve sosyal medya bağlantılarımız:',
-                    reply_markup=kb,
-                )
-        else:
-            await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
+        await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
