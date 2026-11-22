@@ -759,7 +759,11 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES(?,?,?,?,?,'pending',?)""",
                 (tenant_id, chat.id, user.id, user.username or '', user.full_name, now().isoformat()))
             app_id = cur.lastrowid
-        await msg.reply_text('👑 VIP başvurun özel olarak yöneticilere iletildi. Sonuç sana özel mesajla bildirilecek.')
+        # Do not post application details or acknowledgement in the public group.
+        try:
+            await context.bot.send_message(user.id, '👑 VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
+        except Exception:
+            log.info('Başvuru alındı; kullanıcı botu başlatmadığı için DM gönderilemedi: %s', user.id)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton('✅ 30 gün onayla', callback_data=f'tenantapp:approve:{app_id}'),
             InlineKeyboardButton('❌ Reddet', callback_data=f'tenantapp:reject:{app_id}')
@@ -841,6 +845,9 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
 
 async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text('Bu ayar komutunu botla özel sohbetten kullan.')
+        return
     raw = update.message.text.partition(' ')[2].strip()
     # /linkekle kategori | görünen ad | https://...
     parts = [x.strip() for x in raw.split('|', 2)]
@@ -859,6 +866,9 @@ async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text('Bu ayar komutunu botla özel sohbetten kullan.')
+        return
     raw = update.message.text.partition(' ')[2].strip()
     parts = [x.strip() for x in raw.split('|', 1)]
     if len(parts) != 2 or not parts[0] or not parts[1].startswith(('https://t.me/','http://t.me/')):
@@ -882,8 +892,16 @@ async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     targets = []
     with connect() as c:
-        targets = [int(r[0]) for r in c.execute(
-            "SELECT channel_id FROM tenant_channels WHERE tenant_id=? AND status='active'", (tenant_id,)).fetchall()]
+        if admin(uid):
+            rows = c.execute(
+                "SELECT channel_id FROM tenant_channels WHERE tenant_id=? AND status='active'", (tenant_id,)
+            ).fetchall()
+        else:
+            # Channel managers may publish only to channels explicitly assigned to them.
+            rows = c.execute("""SELECT DISTINCT channel_id FROM tenant_admins
+                WHERE tenant_id=? AND user_id=? AND status='active'
+                AND channel_id IS NOT NULL ORDER BY channel_id""", (tenant_id, uid)).fetchall()
+        targets = [int(r[0]) for r in rows]
     if not targets:
         await update.message.reply_text('Aktif kanal bulunamadı.')
         return
