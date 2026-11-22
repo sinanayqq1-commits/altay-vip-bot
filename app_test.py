@@ -722,7 +722,10 @@ def manager_can_access(uid, tenant_id, cid=None):
 async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
-    if not msg or chat.type not in ('group', 'supergroup') or not msg.text:
+    # Normal grup mesajları ve kanal gönderileri desteklenir.
+    # Kanal gönderilerinde Telegram kullanıcı kimliği sağlamaz; SITE/SİTE çalışır,
+    # VIP başvurusu ise başvuranın kimliği gerektiğinden yalnızca grupta alınır.
+    if not msg or chat.type not in ('group', 'supergroup', 'channel') or not msg.text:
         return
     channel = tenant_for_channel(chat.id)
     if not channel:
@@ -745,7 +748,13 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # !Vip yalnızca müşteri Sohbet kanalında tam mesaj olarak başvuru açar.
     if body.casefold() == '!vip':
         user = update.effective_user
-        if not user or channel_type != 'chat':
+        if channel_type != 'chat':
+            return
+        if chat.type == 'channel' or not user:
+            await msg.reply_text(
+                '👑 VIP başvurusu için lütfen Sohbet grubunda kendi hesabınla !Vip yaz. '
+                'Kanal gönderilerinde Telegram başvuran kişinin kullanıcı ID bilgisini paylaşmadığı için başvuru alınamıyor.'
+            )
             return
         with connect() as c:
             existing = c.execute("""SELECT status FROM tenant_applications
