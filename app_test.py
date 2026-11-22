@@ -808,12 +808,44 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # SITE/SİTE yalnızca müşteri sohbet kanalında tam mesaj olarak çalışır.
     if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
         with connect() as c:
-            rows = c.execute("""SELECT display_name,url FROM link_items
+            rows = c.execute("""SELECT category,display_name,url FROM link_items
                 WHERE tenant_id=? AND enabled=1 ORDER BY category,link_id""", (tenant_id,)).fetchall()
         if not rows:
             await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
             return
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows])
+
+        # Buton düzeni: site girişleri üstte yan yana, sosyal medya altta ikili.
+        # Telegram butonlarında özel arka plan rengi/logo desteklenmediği için
+        # ayırt edici marka simgeleri ve kısa adlar kullanılır.
+        site_rows = [r for r in rows if (r['category'] or '').casefold() == 'site']
+        social_rows = [r for r in rows if (r['category'] or '').casefold() != 'site']
+        brand_icons = {
+            'instagram': '📸',
+            'x': '𝕏',
+            'threads': '🧵',
+            'kick': '🟢',
+        }
+
+        def make_button(row):
+            label = row['display_name'].strip()
+            normalized = label.casefold()
+            icon = '🔗'
+            for brand, symbol in brand_icons.items():
+                if brand in normalized:
+                    icon = symbol
+                    break
+            if 'masterbetting' in normalized or 'bizbet' in normalized:
+                icon = '🌐'
+            return InlineKeyboardButton(f'{icon} {label}', url=row['url'])
+
+        keyboard_rows = []
+        if site_rows:
+            keyboard_rows.append([make_button(r) for r in site_rows])
+        social_buttons = [make_button(r) for r in social_rows]
+        keyboard_rows.extend(
+            [social_buttons[i:i + 2] for i in range(0, len(social_buttons), 2)]
+        )
+        kb = InlineKeyboardMarkup(keyboard_rows)
         with connect() as c:
             setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='site_photo_file_id'",
                                  (tenant_id,)).fetchone()
