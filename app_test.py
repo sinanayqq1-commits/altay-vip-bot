@@ -78,10 +78,7 @@ def init_db():
             tenant_id TEXT NOT NULL, category TEXT NOT NULL,
             display_name TEXT NOT NULL, url TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
-
-        # SITE/SİTE yanıtında gösterilecek varsayılan bağlantılar.
-        # INSERT OR IGNORE yerine tenant + görünen ad kontrolü kullanılır:
-        # mevcut yöneticinin düzenlediği URL'ler deploy sırasında ezilmez.
+        # Varsayılan SITE bağlantıları: yalnızca eksik kayıtları ekle.
         default_links = [
             ("site", "MASTERBETTING GİRİŞ", "https://zipt.to/y7BfPx"),
             ("site", "BİZBET GİRİŞ", "https://bizbet-28601.pro/tr/registration?tag=d_5908901m_62079c_"),
@@ -817,7 +814,14 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
             return
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows])
-        await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
+        with connect() as c:
+            setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='site_photo_file_id'",
+                                 (tenant_id,)).fetchone()
+        photo_id = setting['setting_value'] if setting else None
+        if photo_id:
+            await msg.reply_photo(photo=photo_id, caption='🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
+        else:
+            await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
@@ -924,6 +928,27 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
             pass
         await q.answer('Başvuru reddedildi.')
         await q.edit_message_reply_markup(reply_markup=None)
+
+
+async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat or chat.type != 'private':
+        return
+    if not admin(user.id):
+        await msg.reply_text('Bu görseli yalnızca ana yönetici kaydedebilir.')
+        return
+    if not msg.photo:
+        return
+    file_id = msg.photo[-1].file_id
+    with connect() as c:
+        for tenant_key in ('altay_demo', 'musteri_001'):
+            c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+                VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+                setting_value=excluded.setting_value, updated_at=excluded.updated_at""",
+                (tenant_key, 'site_photo_file_id', file_id, now().isoformat()))
+    await msg.reply_text('✅ SITE tanıtım görseli kaydedildi. Bundan sonra SITE veya SİTE yazıldığında görsel ve bağlantı butonları birlikte paylaşılacak.')
 
 
 async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1046,6 +1071,7 @@ def main():
     app.add_handler(CommandHandler("linkekle", add_link))
     app.add_handler(CommandHandler("destekekle", add_support))
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("ALTAY VIP BOT - eski işlemler korunuyor, çok kanallı panel fazı aktif.")
     app.run_polling()
