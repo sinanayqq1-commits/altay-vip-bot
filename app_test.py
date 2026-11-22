@@ -184,6 +184,45 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    # Kanal VIP butonundan gelen derin bağlantı: başvuru özel sohbette alınır,
+    # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
+    if context.args and context.args[0].startswith("vip_"):
+        try:
+            _, tenant_id, channel_id_text = context.args[0].split("_", 2)
+            channel_id_value = int(channel_id_text)
+            channel_row = tenant_for_channel(channel_id_value)
+            if not channel_row or channel_row[0] != tenant_id:
+                raise ValueError("unknown tenant/channel")
+            with connect() as c:
+                existing = c.execute("""SELECT application_id,status FROM tenant_applications
+                    WHERE tenant_id=? AND channel_id=? AND user_id=?
+                    ORDER BY application_id DESC LIMIT 1""",
+                    (tenant_id, channel_id_value, user.id)).fetchone()
+                if existing and existing['status'] == 'pending':
+                    await update.message.reply_text("VIP başvurun zaten yöneticilere iletilmiş.")
+                    return
+                cur = c.execute("""INSERT INTO tenant_applications
+                    (tenant_id,channel_id,user_id,username,full_name,status,created_at)
+                    VALUES(?,?,?,?,?,'pending',?)""",
+                    (tenant_id, channel_id_value, user.id, user.username or '', user.full_name, now().isoformat()))
+                app_id = cur.lastrowid
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton('✅ 30 gün onayla', callback_data=f'tenantapp:approve:{app_id}'),
+                InlineKeyboardButton('❌ Reddet', callback_data=f'tenantapp:reject:{app_id}')
+            ]])
+            admin_text = (f'🆕 VIP başvurusu\nKanal: {channel_row[1]}\nAd: {user.full_name}\n'
+                          f'Kullanıcı: @{user.username or "yok"}\nID: {user.id}')
+            for aid in tenant_manager_ids(tenant_id, channel_id_value):
+                try:
+                    await context.bot.send_message(aid, admin_text, reply_markup=kb)
+                except Exception:
+                    log.exception('VIP başvurusu yöneticiye iletilemedi: %s', aid)
+            await update.message.reply_text('👑 VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
+            return
+        except Exception:
+            log.exception('VIP derin bağlantısı işlenemedi')
+            await update.message.reply_text('VIP başvuru bağlantısı geçersiz. Lütfen kanaldaki butonu yeniden kullan.')
+            return
     exp = active_expiry(user.id)
     if exp:
         msg = f"Hoş geldin {user.first_name}! VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}"
@@ -745,15 +784,16 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text('🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
         return
 
-    # !Vip yalnızca müşteri Sohbet kanalında tam mesaj olarak başvuru açar.
-    if body.casefold() == '!vip':
+    # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
+    # gönderi sahibini vermediği yayın kanallarında deep-link butonuyla özel sohbete taşınır.
+    if body.casefold() in ('!vip', 'vip'):
+        if chat.type == 'channel' or not update.effective_user:
+            bot_username = context.bot.username
+            deep_link = f"https://t.me/{bot_username}?start=vip_{tenant_id}_{chat.id}"
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton('👑 VIP Başvurusu', url=deep_link)]])
+            await msg.reply_text('VIP başvurusu yapmak için aşağıdaki butona dokun:', reply_markup=kb)
+            return
         user = update.effective_user
-        if channel_type not in ('chat', 'legacy'):
-            return
-        if chat.type == 'channel' or not user:
-            # Yayın kanallarında gönderi sahibi bilgisi başvuru için güvenilir değildir.
-            # Kanalda !Vip komutunu sessizce yok say; VIP başvurusu Sohbet grubunda yapılır.
-            return
         with connect() as c:
             existing = c.execute("""SELECT status FROM tenant_applications
                 WHERE tenant_id=? AND channel_id=? AND user_id=?
