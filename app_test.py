@@ -99,39 +99,30 @@ def init_db():
                         (tenant_key, category, label, url)
                     )
 
-        # Seed the test tenant and the customer's three channels idempotently.
+        # Yalnızca test ortamı otomatik tanımlanır. Müşteri kanalları daha sonra
+        # kullanıcı tarafından verilen gerçek ID'lerle eklenecek.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
             ("altay_demo", "ALTAY VIP - Deneme", "active", now().isoformat()))
+
+        # Test sohbet grubu: kullanıcının verdiği ID.
         c.execute("""INSERT OR IGNORE INTO tenant_channels
             (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,?)""",
-            (-1004367177649, "altay_demo", "Deneme", "test", 8011205445, "active"))
-        # Deneme kanalını aynı zamanda altay_demo müşterisinin VIP hedef kanalı yap.
-        # channel_id PRIMARY KEY olduğu için ayrı kopya kayıt yerine mevcut satırın türü güncellenir.
-        c.execute("""UPDATE tenant_channels SET channel_type='vip', channel_name='Deneme VIP',
+            (-5172524860, "altay_demo", "Deneme Sohbet Grubu", "chat", 8011205445, "active"))
+
+        # Mevcut Deneme kanalı test VIP hedefi olarak korunur.
+        c.execute("""INSERT OR IGNORE INTO tenant_channels
+            (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+            VALUES(?,?,?,?,?,?)""",
+            (-1004367177649, "altay_demo", "Deneme VIP", "vip", 8011205445, "active"))
+        c.execute("""UPDATE tenant_channels SET channel_name='Deneme VIP', channel_type='vip',
             status='active' WHERE channel_id=? AND tenant_id='altay_demo'""", (-1004367177649,))
 
+        # Müşteri kayıt alanı hazır; gerçek müşteri kanalları daha sonra eklenecek.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
             ("musteri_001", "Müşteri 001", "active", now().isoformat()))
-        for cid, name, kind, owner in [
-            (-1002495313859, "Sohbet", "chat", 7818013007),
-            (-1004327705802, "Gizli", "private", 7818013007),
-            (-1003913699711, "Elit VIP", "vip", 1811901723),
-        ]:
-            c.execute("""INSERT OR IGNORE INTO tenant_channels
-                (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
-                VALUES(?,?,?,?,?,'active')""",
-                (cid, "musteri_001", name, kind, owner))
-
-        for cid in (-1002495313859, -1004327705802, -1003913699711):
-            manager_id = 1811901723 if cid == -1003913699711 else 7818013007
-            c.execute("""INSERT OR IGNORE INTO tenant_admins
-                (tenant_id,user_id,role,channel_id,status,added_at)
-                VALUES(?,?,?,?,?,?)""",
-                ("musteri_001", manager_id, "channel_manager", cid,
-                 "active", now().isoformat()))
 
         # Keep the old single-channel setting separately identifiable.
         if CHANNEL_ID:
@@ -805,42 +796,16 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tenant_id, channel_name, channel_type = channel
     body = msg.text.strip()
 
-    # SITE/SİTE yalnızca müşteri sohbet kanalında tam mesaj olarak çalışır.
+    # SITE/SİTE: Yayındaki RODRI VIP bağlantı sayfasını tek butonla açar.
     if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
-        with connect() as c:
-            rows = c.execute("""SELECT category,display_name,url FROM link_items
-                WHERE tenant_id=? AND enabled=1 ORDER BY category,link_id""", (tenant_id,)).fetchall()
-        if not rows:
-            await msg.reply_text('Henüz site veya sosyal medya bağlantısı tanımlanmamış.')
-            return
-
-        # VIP görünüm: site girişleri alt alta, sosyal medya dört buton (2x2).
-        # Telegram Bot API inline butonlarda arka plan/font rengini değiştirmeye izin vermez.
-        # Altın görünüm, kısa büyük harfli etiketler ve altın simgelerle verilir.
-        site_rows = [r for r in rows if (r['category'] or '').casefold() == 'site']
-        social_rows = [r for r in rows if (r['category'] or '').casefold() != 'site']
-
-        def make_button(row):
-            # Butonlarda yalnızca bağlantı adı gösterilir; simge/dekoratif karakter yok.
-            label = row['display_name'].strip()
-            return InlineKeyboardButton(label, url=row['url'])
-
-        keyboard_rows = []
-        # Her buton tek satırda: Telegram mevcut satır genişliğini kullanarak
-        # butonu mümkün olduğunca tam genişlikte gösterir.
-        for row in site_rows:
-            keyboard_rows.append([make_button(row)])
-        for row in social_rows[:4]:
-            keyboard_rows.append([make_button(row)])
-        kb = InlineKeyboardMarkup(keyboard_rows)
-        with connect() as c:
-            setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='site_photo_file_id'",
-                                 (tenant_id,)).fetchone()
-        photo_id = setting['setting_value'] if setting else None
-        if photo_id:
-            await msg.reply_photo(photo=photo_id, caption='🔗 Site ve sosyal medya bağlantılarımız:', reply_markup=kb)
-        else:
-            await msg.reply_text('✨ **RODRI VIP BAĞLANTILARI** ✨', parse_mode='Markdown', reply_markup=kb)
+        page_url = "https://sinanayqq1-commits.github.io/altay-vip-links/"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("RODRİ VIP BAĞLANTILAR", url=page_url)
+        ]])
+        await msg.reply_text(
+            "✨ RODRİ VIP bağlantı sayfamız:",
+            reply_markup=kb
+        )
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
