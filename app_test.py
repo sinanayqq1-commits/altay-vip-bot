@@ -782,73 +782,33 @@ def manager_can_access(uid, tenant_id, cid=None):
     return bool(row)
 
 
-def site_keyboard(tenant_id):
-    """SITE komutunda dış sayfaya yönlendirmeden kayıtlı bağlantıları doğrudan göster."""
-    with connect() as c:
-        rows = c.execute(
-            "SELECT category,display_name,url FROM link_items "
-            "WHERE tenant_id=? AND enabled=1 ORDER BY link_id",
-            (tenant_id,)
-        ).fetchall()
-    icon_map = {
-        "MASTERBETTING GİRİŞ": "🎯",
-        "BİZBET GİRİŞ": "🎲",
-        "INSTAGRAM": "📸",
-        "X": "𝕏",
-        "THREADS": "🧵",
-        "KICK": "🟢",
-    }
-    buttons = []
-    row = []
-    for item in rows:
-        label = item[1].strip()
-        icon = icon_map.get(label.upper(), "🔗")
-        row.append(InlineKeyboardButton(f"{icon} {label}", url=item[2]))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    return InlineKeyboardMarkup(buttons) if buttons else None
-
-
 async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
     # Normal grup mesajları ve kanal gönderileri desteklenir.
-    if not msg or not chat or chat.type not in ('group', 'supergroup', 'channel') or not msg.text:
+    # Kanal gönderilerinde Telegram kullanıcı kimliği sağlamaz; SITE/SİTE çalışır,
+    # VIP başvurusu ise başvuranın kimliği gerektiğinden yalnızca grupta alınır.
+    if not msg or chat.type not in ('group', 'supergroup', 'channel') or not msg.text:
         return
-
     channel = tenant_for_channel(chat.id)
-    if not channel and chat.type in ('group', 'supergroup'):
-        # Deneme sohbetinin Telegram ID'si değişmiş/yenilenmiş olsa da test botu
-        # grupta çalışsın. Yalnızca bu botun eklendiği grubu altay_demo'ya bağla.
-        with connect() as c:
-            demo = c.execute(
-                "SELECT 1 FROM tenants WHERE tenant_id='altay_demo' AND status='active'"
-            ).fetchone()
-            if demo:
-                c.execute("""INSERT OR IGNORE INTO tenant_channels
-                    (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
-                    VALUES(?,?,?,?,?,?)""",
-                    (chat.id, 'altay_demo', chat.title or 'Deneme Sohbeti', 'chat',
-                     update.effective_user.id if update.effective_user else None, 'active'))
-                channel = c.execute("""SELECT tenant_id,channel_name,channel_type
-                    FROM tenant_channels WHERE channel_id=? AND status='active'""",
-                    (chat.id,)).fetchone()
     if not channel:
         return
     tenant_id, channel_name, channel_type = channel
     body = msg.text.strip()
 
-    # SITE/SİTE: Altı bağlantıyı doğrudan Telegram butonlarıyla açar;
-    # ayrıca web sitesi/ikinci bağlantı paneli açılmaz.
+    # SITE/SİTE: Kanal ve test grubunda bağlantıları doğrudan butonlar halinde paylaş.
     if body.upper() in ('SITE', 'SİTE'):
-        kb = site_keyboard(tenant_id)
-        await msg.reply_text(
-            "✨ RODRİ VIP BAĞLANTILARI ✨",
-            reply_markup=kb
-        )
+        with connect() as c:
+            rows = c.execute("""SELECT display_name,url FROM link_items
+                WHERE tenant_id=? AND enabled=1 ORDER BY
+                CASE category WHEN 'site' THEN 0 ELSE 1 END, link_id""",
+                (tenant_id,)).fetchall()
+        if not rows:
+            await msg.reply_text('Bağlantılar henüz tanımlanmamış.')
+            return
+        buttons = [[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows]
+        kb = InlineKeyboardMarkup(buttons)
+        await msg.reply_text('✨ RODRİ VIP BAĞLANTILARI ✨', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
@@ -1098,6 +1058,7 @@ def main():
     app.add_handler(CommandHandler("linkekle", add_link))
     app.add_handler(CommandHandler("destekekle", add_support))
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("ALTAY VIP BOT - eski işlemler korunuyor, çok kanallı panel fazı aktif.")
     app.run_polling()
