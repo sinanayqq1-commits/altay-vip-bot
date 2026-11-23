@@ -796,16 +796,19 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tenant_id, channel_name, channel_type = channel
     body = msg.text.strip()
 
-    # SITE/SİTE: Yayındaki RODRI VIP bağlantı sayfasını tek butonla açar.
-    if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
-        page_url = "https://sinanayqq1-commits.github.io/altay-vip-links/"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("RODRİ VIP BAĞLANTILAR", url=page_url)
-        ]])
-        await msg.reply_text(
-            "✨ RODRİ VIP bağlantı sayfamız:",
-            reply_markup=kb
-        )
+    # SITE/SİTE: Kanal ve test grubunda bağlantıları doğrudan butonlar halinde paylaş.
+    if body.upper() in ('SITE', 'SİTE'):
+        with connect() as c:
+            rows = c.execute("""SELECT display_name,url FROM link_items
+                WHERE tenant_id=? AND enabled=1 ORDER BY
+                CASE category WHEN 'site' THEN 0 ELSE 1 END, link_id""",
+                (tenant_id,)).fetchall()
+        if not rows:
+            await msg.reply_text('Bağlantılar henüz tanımlanmamış.')
+            return
+        buttons = [[InlineKeyboardButton(r['display_name'], url=r['url'])] for r in rows]
+        kb = InlineKeyboardMarkup(buttons)
+        await msg.reply_text('✨ RODRİ VIP BAĞLANTILARI ✨', reply_markup=kb)
         return
 
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
