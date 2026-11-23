@@ -1,4 +1,4 @@
-import os, logging, sqlite3, re
+import os, logging, sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -78,14 +78,6 @@ def init_db():
             tenant_id TEXT NOT NULL, category TEXT NOT NULL,
             display_name TEXT NOT NULL, url TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS vip_payment_sessions(
-            user_id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL,
-            channel_id INTEGER NOT NULL, created_at TEXT NOT NULL)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS vip_payment_receipts(
-            receipt_id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
-            channel_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
-            file_id TEXT NOT NULL, username TEXT, full_name TEXT,
-            status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)""")
         # Varsayılan SITE bağlantıları: yalnızca eksik kayıtları ekle.
         default_links = [
             ("site", "MASTERBETTING GİRİŞ", "https://zipt.to/y7BfPx"),
@@ -107,39 +99,30 @@ def init_db():
                         (tenant_key, category, label, url)
                     )
 
-        # Seed the test tenant and the customer's three channels idempotently.
+        # Yalnızca test ortamı otomatik tanımlanır. Müşteri kanalları daha sonra
+        # kullanıcı tarafından verilen gerçek ID'lerle eklenecek.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
             ("altay_demo", "ALTAY VIP - Deneme", "active", now().isoformat()))
+
+        # Test sohbet grubu: kullanıcının verdiği ID.
         c.execute("""INSERT OR IGNORE INTO tenant_channels
             (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,?)""",
-            (-1004367177649, "altay_demo", "Deneme", "test", 8011205445, "active"))
-        # Deneme kanalını aynı zamanda altay_demo müşterisinin VIP hedef kanalı yap.
-        # channel_id PRIMARY KEY olduğu için ayrı kopya kayıt yerine mevcut satırın türü güncellenir.
-        c.execute("""UPDATE tenant_channels SET channel_type='vip', channel_name='Deneme VIP',
+            (-5172524860, "altay_demo", "Deneme Sohbet Grubu", "chat", 8011205445, "active"))
+
+        # Mevcut Deneme kanalı test VIP hedefi olarak korunur.
+        c.execute("""INSERT OR IGNORE INTO tenant_channels
+            (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+            VALUES(?,?,?,?,?,?)""",
+            (-1004367177649, "altay_demo", "Deneme VIP", "vip", 8011205445, "active"))
+        c.execute("""UPDATE tenant_channels SET channel_name='Deneme VIP', channel_type='vip',
             status='active' WHERE channel_id=? AND tenant_id='altay_demo'""", (-1004367177649,))
 
+        # Müşteri kayıt alanı hazır; gerçek müşteri kanalları daha sonra eklenecek.
         c.execute("""INSERT OR IGNORE INTO tenants
             (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
             ("musteri_001", "Müşteri 001", "active", now().isoformat()))
-        for cid, name, kind, owner in [
-            (-1002495313859, "Sohbet", "chat", 7818013007),
-            (-1004327705802, "Gizli", "private", 7818013007),
-            (-1003913699711, "Elit VIP", "vip", 1811901723),
-        ]:
-            c.execute("""INSERT OR IGNORE INTO tenant_channels
-                (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
-                VALUES(?,?,?,?,?,'active')""",
-                (cid, "musteri_001", name, kind, owner))
-
-        for cid in (-1002495313859, -1004327705802, -1003913699711):
-            manager_id = 1811901723 if cid == -1003913699711 else 7818013007
-            c.execute("""INSERT OR IGNORE INTO tenant_admins
-                (tenant_id,user_id,role,channel_id,status,added_at)
-                VALUES(?,?,?,?,?,?)""",
-                ("musteri_001", manager_id, "channel_manager", cid,
-                 "active", now().isoformat()))
 
         # Keep the old single-channel setting separately identifiable.
         if CHANNEL_ID:
@@ -216,13 +199,17 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # Kanal/grup VIP butonundan gelen bağlantı: IBAN ve dekont akışı özel sohbette yürür.
+    # Kanal VIP butonundan gelen derin bağlantı: başvuru özel sohbette alınır,
+    # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
     if context.args and (context.args[0].startswith("vipc_") or context.args[0].startswith("vip_")):
         try:
+            # Yeni bağlantı yalnızca kanal ID'sini taşır. Tenant ID'si veritabanından
+            # okunur; böylece eski INSERT OR IGNORE kanal kayıtları bağlantıyı bozmaz.
             raw = context.args[0]
             if raw.startswith("vipc_"):
                 channel_id_value = int(raw[len("vipc_"):])
             else:
+                # Eski v7/v8 bağlantılarıyla geriye dönük uyumluluk.
                 payload = raw[len("vip_"):]
                 _, channel_id_text = payload.rsplit("_", 1)
                 channel_id_value = int(channel_id_text)
@@ -231,24 +218,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise ValueError("unknown channel")
             tenant_id = channel_row[0]
             with connect() as c:
-                c.execute("""INSERT INTO vip_payment_sessions(user_id,tenant_id,channel_id,created_at)
-                    VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
-                    tenant_id=excluded.tenant_id,channel_id=excluded.channel_id,created_at=excluded.created_at""",
-                    (user.id, tenant_id, channel_id_value, now().isoformat()))
-                setting = c.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='payment_iban'", (tenant_id,)).fetchone()
-            iban = setting['setting_value'] if setting else ''
-            if not iban:
-                await update.message.reply_text("VIP başvurusu için ödeme bilgisi henüz tanımlanmamış. Lütfen yöneticiyle iletişime geç.")
-                return
-            await update.message.reply_text(
-                f"👑 VIP ÜYELİK ÖDEMESİ\n\nIBAN: `{iban}`\n\n"
-                "Açıklama kısmına Telegram kullanıcı adını yaz. Ödemeyi yaptıktan sonra dekontun ekran görüntüsünü bu sohbete fotoğraf olarak gönder.\n"
-                "Dekont yöneticimize iletilecek; onaydan sonra VIP üyeliğin açılacak.",
-                parse_mode="Markdown")
+                existing = c.execute("""SELECT application_id,status FROM tenant_applications
+                    WHERE tenant_id=? AND channel_id=? AND user_id=?
+                    ORDER BY application_id DESC LIMIT 1""",
+                    (tenant_id, channel_id_value, user.id)).fetchone()
+                if existing and existing['status'] == 'pending':
+                    await update.message.reply_text("VIP başvurun zaten yöneticilere iletilmiş.")
+                    return
+                cur = c.execute("""INSERT INTO tenant_applications
+                    (tenant_id,channel_id,user_id,username,full_name,status,created_at)
+                    VALUES(?,?,?,?,?,'pending',?)""",
+                    (tenant_id, channel_id_value, user.id, user.username or '', user.full_name, now().isoformat()))
+                app_id = cur.lastrowid
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton('✅ 30 gün onayla', callback_data=f'tenantapp:approve:{app_id}'),
+                InlineKeyboardButton('❌ Reddet', callback_data=f'tenantapp:reject:{app_id}')
+            ]])
+            admin_text = (f'🆕 VIP başvurusu\nKanal: {channel_row[1]}\nAd: {user.full_name}\n'
+                          f'Kullanıcı: @{user.username or "yok"}\nID: {user.id}')
+            for aid in tenant_manager_ids(tenant_id, channel_id_value):
+                try:
+                    await context.bot.send_message(aid, admin_text, reply_markup=kb)
+                except Exception:
+                    log.exception('VIP başvurusu yöneticiye iletilemedi: %s', aid)
+            await update.message.reply_text(' VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
             return
         except Exception:
-            log.exception('VIP ödeme bağlantısı işlenemedi')
-            await update.message.reply_text('VIP bağlantısı geçersiz. Lütfen kanaldaki butonu yeniden kullan.')
+            log.exception('VIP derin bağlantısı işlenemedi')
+            await update.message.reply_text('VIP başvuru bağlantısı geçersiz. Lütfen kanaldaki butonu yeniden kullan.')
             return
     exp = active_expiry(user.id)
     if exp:
@@ -785,28 +782,71 @@ def manager_can_access(uid, tenant_id, cid=None):
     return bool(row)
 
 
+def site_keyboard(tenant_id):
+    """SITE komutunda dış sayfaya yönlendirmeden kayıtlı bağlantıları doğrudan göster."""
+    with connect() as c:
+        rows = c.execute(
+            "SELECT category,display_name,url FROM link_items "
+            "WHERE tenant_id=? AND enabled=1 ORDER BY link_id",
+            (tenant_id,)
+        ).fetchall()
+    icon_map = {
+        "MASTERBETTING GİRİŞ": "🎯",
+        "BİZBET GİRİŞ": "🎲",
+        "INSTAGRAM": "📸",
+        "X": "𝕏",
+        "THREADS": "🧵",
+        "KICK": "🟢",
+    }
+    buttons = []
+    row = []
+    for item in rows:
+        label = item[1].strip()
+        icon = icon_map.get(label.upper(), "🔗")
+        row.append(InlineKeyboardButton(f"{icon} {label}", url=item[2]))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons) if buttons else None
+
+
 async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
     # Normal grup mesajları ve kanal gönderileri desteklenir.
-    # Kanal gönderilerinde Telegram kullanıcı kimliği sağlamaz; SITE/SİTE çalışır,
-    # VIP başvurusu ise başvuranın kimliği gerektiğinden yalnızca grupta alınır.
-    if not msg or chat.type not in ('group', 'supergroup', 'channel') or not msg.text:
+    if not msg or not chat or chat.type not in ('group', 'supergroup', 'channel') or not msg.text:
         return
+
     channel = tenant_for_channel(chat.id)
+    if not channel and chat.type in ('group', 'supergroup'):
+        # Deneme sohbetinin Telegram ID'si değişmiş/yenilenmiş olsa da test botu
+        # grupta çalışsın. Yalnızca bu botun eklendiği grubu altay_demo'ya bağla.
+        with connect() as c:
+            demo = c.execute(
+                "SELECT 1 FROM tenants WHERE tenant_id='altay_demo' AND status='active'"
+            ).fetchone()
+            if demo:
+                c.execute("""INSERT OR IGNORE INTO tenant_channels
+                    (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+                    VALUES(?,?,?,?,?,?)""",
+                    (chat.id, 'altay_demo', chat.title or 'Deneme Sohbeti', 'chat',
+                     update.effective_user.id if update.effective_user else None, 'active'))
+                channel = c.execute("""SELECT tenant_id,channel_name,channel_type
+                    FROM tenant_channels WHERE channel_id=? AND status='active'""",
+                    (chat.id,)).fetchone()
     if not channel:
         return
     tenant_id, channel_name, channel_type = channel
     body = msg.text.strip()
 
-    # SITE/SİTE: Yayındaki RODRI VIP bağlantı sayfasını tek butonla açar.
-    if body.upper() in ('SITE', 'SİTE') and (chat.type == 'channel' or channel_type in ('chat', 'legacy', 'test')):
-        page_url = "https://sinanayqq1-commits.github.io/altay-vip-links/"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("RODRİ VIP BAĞLANTILAR", url=page_url)
-        ]])
+    # SITE/SİTE: Altı bağlantıyı doğrudan Telegram butonlarıyla açar;
+    # ayrıca web sitesi/ikinci bağlantı paneli açılmaz.
+    if body.upper() in ('SITE', 'SİTE'):
+        kb = site_keyboard(tenant_id)
         await msg.reply_text(
-            "✨ RODRİ VIP bağlantı sayfamız:",
+            "✨ RODRİ VIP BAĞLANTILARI ✨",
             reply_markup=kb
         )
         return
@@ -814,10 +854,41 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # !Vip / VIP her kayıtlı müşteri kanalında çalışır. Başvuru, Telegram'ın
     # gönderi sahibini vermediği yayın kanallarında deep-link butonuyla özel sohbete taşınır.
     if body.casefold() in ('!vip', 'vip'):
-        bot_username = context.bot.username
-        deep_link = f"https://t.me/{bot_username}?start=vipc_{chat.id}"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton('💳 IBAN ile VIP başvurusu', url=deep_link)]])
-        await msg.reply_text('👑 VIP üyelik için aşağıdaki butona dokun. IBAN ve dekont adımı özel mesajda açılacak:', reply_markup=kb)
+        if chat.type == 'channel' or not update.effective_user:
+            bot_username = context.bot.username
+            deep_link = f"https://t.me/{bot_username}?start=vipc_{chat.id}"
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(' VIP Başvurusu', url=deep_link)]])
+            await msg.reply_text('VIP başvurusu yapmak için aşağıdaki butona dokun:', reply_markup=kb)
+            return
+        user = update.effective_user
+        with connect() as c:
+            existing = c.execute("""SELECT status FROM tenant_applications
+                WHERE tenant_id=? AND channel_id=? AND user_id=?
+                ORDER BY application_id DESC LIMIT 1""", (tenant_id, chat.id, user.id)).fetchone()
+            if existing and existing['status'] == 'pending':
+                await msg.reply_text('VIP başvurun zaten yöneticilere iletildi.')
+                return
+            cur = c.execute("""INSERT INTO tenant_applications
+                (tenant_id,channel_id,user_id,username,full_name,status,created_at)
+                VALUES(?,?,?,?,?,'pending',?)""",
+                (tenant_id, chat.id, user.id, user.username or '', user.full_name, now().isoformat()))
+            app_id = cur.lastrowid
+        # Do not post application details or acknowledgement in the public group.
+        try:
+            await context.bot.send_message(user.id, ' VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
+        except Exception:
+            log.info('Başvuru alındı; kullanıcı botu başlatmadığı için DM gönderilemedi: %s', user.id)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton('✅ 30 gün onayla', callback_data=f'tenantapp:approve:{app_id}'),
+            InlineKeyboardButton('❌ Reddet', callback_data=f'tenantapp:reject:{app_id}')
+        ]])
+        text = (f'🆕 VIP başvurusu\nKanal: {channel_name}\nAd: {user.full_name}\n'
+                f'Kullanıcı: @{user.username or "yok"}\nID: {user.id}')
+        for aid in tenant_manager_ids(tenant_id, chat.id):
+            try:
+                await context.bot.send_message(aid, text, reply_markup=kb)
+            except Exception:
+                log.exception('VIP başvurusu yöneticiye iletilemedi: %s', aid)
         return
 
 
@@ -886,90 +957,6 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         await q.edit_message_reply_markup(reply_markup=None)
 
 
-async def set_iban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only(update) or update.effective_chat.type != 'private':
-        await update.message.reply_text('IBAN ayarını yalnızca ana yönetici botla özel sohbetten değiştirebilir.')
-        return
-    iban = update.message.text.partition(' ')[2].replace(' ', '').strip().upper()
-    if not iban:
-        await update.message.reply_text('Kullanım: /iban TR...  (Yeni IBAN)')
-        return
-    if not re.fullmatch(r'TR[0-9A-Z]{24}', iban):
-        await update.message.reply_text('IBAN biçimi geçersiz. Türkiye IBANı TR ile başlamalı ve 26 karakter olmalı.')
-        return
-    with connect() as c:
-        for tenant_id in ('altay_demo', 'musteri_001'):
-            c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
-                VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
-                setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
-                (tenant_id, 'payment_iban', iban, now().isoformat()))
-    await update.message.reply_text('✅ IBAN güncellendi. Yeni VIP başvurularında bu IBAN gösterilecek.')
-
-
-async def payment_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, user, chat = update.effective_message, update.effective_user, update.effective_chat
-    if not msg or not user or not chat or chat.type != 'private' or not msg.photo:
-        return
-    with connect() as c:
-        session = c.execute('SELECT tenant_id,channel_id FROM vip_payment_sessions WHERE user_id=?', (user.id,)).fetchone()
-    if not session:
-        return
-    file_id = msg.photo[-1].file_id
-    with connect() as c:
-        cur = c.execute("""INSERT INTO vip_payment_receipts(tenant_id,channel_id,user_id,file_id,username,full_name,status,created_at)
-            VALUES(?,?,?,?,?,?, 'pending', ?)""",
-            (session['tenant_id'], session['channel_id'], user.id, file_id, user.username or '', user.full_name, now().isoformat()))
-        receipt_id = cur.lastrowid
-    await msg.reply_text('✅ Dekontun alındı ve yöneticiye iletildi. Onaydan sonra VIP üyeliğin açılacak.')
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton('📩 Dekontu başvuruya dönüştür', callback_data=f'vipreceipt:approve:{receipt_id}'),
-                                InlineKeyboardButton('❌ Reddet', callback_data=f'vipreceipt:reject:{receipt_id}')]])
-    for aid in tenant_manager_ids(session['tenant_id'], session['channel_id']):
-        try:
-            await context.bot.send_photo(aid, file_id, caption=(f'💳 VIP ödeme dekontu\nKullanıcı: {user.full_name}\n'
-                f'@{user.username or "yok"} | ID: {user.id}\nKanal: {session["channel_id"]}'), reply_markup=kb)
-        except Exception:
-            log.exception('Dekont yöneticiye iletilemedi: %s', aid)
-
-
-async def vip_receipt_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    try:
-        action, receipt_s = q.data.split(':')[1:]
-        receipt_id = int(receipt_s)
-    except Exception:
-        await q.answer('Geçersiz işlem.', show_alert=True)
-        return
-    with connect() as c:
-        receipt = c.execute('SELECT * FROM vip_payment_receipts WHERE receipt_id=?', (receipt_id,)).fetchone()
-    if not receipt:
-        await q.answer('Dekont bulunamadı.', show_alert=True)
-        return
-    if not manager_can_access(q.from_user.id, receipt['tenant_id'], receipt['channel_id']):
-        await q.answer('Bu işlem için yetkin yok.', show_alert=True)
-        return
-    if receipt['status'] != 'pending':
-        await q.answer('Bu dekont daha önce işlenmiş.', show_alert=True)
-        return
-    if action == 'approve':
-        with connect() as c:
-            c.execute("""INSERT INTO tenant_applications(tenant_id,channel_id,user_id,username,full_name,status,created_at)
-                VALUES(?,?,?,?,?,'pending',?)""",
-                (receipt['tenant_id'], receipt['channel_id'], receipt['user_id'], receipt['username'] or '', receipt['full_name'] or 'VIP müşteri', now().isoformat()))
-            app_id = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-            c.execute("UPDATE vip_payment_receipts SET status='approved' WHERE receipt_id=?", (receipt_id,))
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton('✅ 30 gün VIP onayla', callback_data=f'tenantapp:approve:{app_id}'),
-                                    InlineKeyboardButton('❌ Başvuruyu reddet', callback_data=f'tenantapp:reject:{app_id}')]])
-        await q.message.reply_text(f'Ödeme dekontu kontrol edildi. Kullanıcı ID: {receipt["user_id"]}. VIP üyeliğini açmak için son onayı ver.', reply_markup=kb)
-        await context.bot.send_message(receipt['user_id'], 'Ödeme dekontun kontrol edildi. VIP üyeliğin son yönetici onayından sonra açılacak.')
-        await q.answer('Dekont kontrol edildi.')
-    else:
-        with connect() as c:
-            c.execute("UPDATE vip_payment_receipts SET status='rejected' WHERE receipt_id=?", (receipt_id,))
-        await context.bot.send_message(receipt['user_id'], 'Dekontun kabul edilmedi. Lütfen destek ekibiyle iletişime geç.')
-        await q.answer('Dekont reddedildi.')
-    await q.edit_message_reply_markup(reply_markup=None)
-
-
 async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -977,6 +964,7 @@ async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not user or not chat or chat.type != 'private':
         return
     if not admin(user.id):
+        await msg.reply_text('Bu görseli yalnızca ana yönetici kaydedebilir.')
         return
     if not msg.photo:
         return
@@ -1107,13 +1095,9 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r"^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(buttons, pattern=r"^(apply|status|support)$"))
     app.add_handler(CallbackQueryHandler(tenant_application_callbacks, pattern=r"^tenantapp:"))
-    app.add_handler(CallbackQueryHandler(vip_receipt_callbacks, pattern=r"^vipreceipt:"))
-    app.add_handler(CommandHandler("iban", set_iban))
     app.add_handler(CommandHandler("linkekle", add_link))
     app.add_handler(CommandHandler("destekekle", add_support))
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, payment_receipt_photo), group=0)
-    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("ALTAY VIP BOT - eski işlemler korunuyor, çok kanallı panel fazı aktif.")
     app.run_polling()
