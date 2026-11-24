@@ -986,22 +986,48 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(caption, reply_markup=kb)
         return
 
-    # !VIP yalnızca özel sohbeti açan bağlantıyı paylaşır. Başvuru kaydı,
-    # butona basılıp bot özelden açıldığında start() içinde oluşturulur.
+    # VIP tetikleyicisi: gruba yanıt yazmadan başvuruyu doğrudan yöneticilere özelden bildir.
     vip_trigger = body.casefold().replace("\u0307", "")
     if vip_trigger in ("!vip", "vip") and chat.type in ("group", "supergroup") and channel_type == "chat":
-        bot_username = (await context.bot.get_me()).username
-        if not bot_username:
-            await msg.reply_text("Bot bağlantısı şu an oluşturulamadı. Lütfen biraz sonra tekrar dene.")
+        user = update.effective_user
+        if not user:
             return
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "🤖 VIP başvurusunu özelden aç",
-            url=f"https://t.me/{bot_username}?start=vipc_{chat.id}"
-        )]])
-        await msg.reply_text(
-            "VIP başvurusu, üyelik durumu ve destek işlemleri özel mesajdan yürütülür. Başlamak için butona bas.",
-            reply_markup=kb
+        with connect() as c:
+            existing = c.execute(
+                "SELECT application_id,status FROM tenant_applications "
+                "WHERE tenant_id=? AND channel_id=? AND user_id=? "
+                "ORDER BY application_id DESC LIMIT 1",
+                (tenant_id, chat.id, user.id)
+            ).fetchone()
+            if existing and existing["status"] == "pending":
+                return
+            cur = c.execute(
+                "INSERT INTO tenant_applications "
+                "(tenant_id,channel_id,user_id,username,full_name,status,created_at) "
+                "VALUES(?,?,?,?,?,'pending',?)",
+                (tenant_id, chat.id, user.id, user.username or "", user.full_name, now().isoformat())
+            )
+            app_id = cur.lastrowid
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ 30 gün onayla", callback_data=f"tenantapp:approve:{app_id}"),
+            InlineKeyboardButton("❌ Reddet", callback_data=f"tenantapp:reject:{app_id}")
+        ]])
+        admin_text = (
+            "🔔 YENİ VIP TALEBİ\n"
+            f"Grup: {chat.title or chat.id}\n"
+            f"Ad: {user.full_name}\n"
+            f"Kullanıcı: @{user.username or 'yok'}\n"
+            f"Telegram ID: {user.id}"
         )
+        sent = False
+        for aid in tenant_manager_ids(tenant_id, chat.id):
+            try:
+                await context.bot.send_message(aid, admin_text, reply_markup=kb)
+                sent = True
+            except Exception:
+                log.exception("VIP talebi yöneticiye iletilemedi: %s", aid)
+        if not sent:
+            log.error("VIP talebi için yöneticiye özel bildirim gönderilemedi; tenant=%s chat=%s", tenant_id, chat.id)
         return
 
 
