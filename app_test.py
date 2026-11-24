@@ -435,21 +435,42 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List active legacy and tenant VIP memberships for the main admin."""
     if not admin_only(update):
         return
+    current = now().isoformat()
     with connect() as c:
-        rows = c.execute(
-            "SELECT user_id,expires_at FROM memberships WHERE status='active' ORDER BY expires_at"
+        legacy_rows = c.execute(
+            "SELECT user_id,expires_at FROM memberships WHERE status='active' AND expires_at>? ORDER BY expires_at",
+            (current,)
         ).fetchall()
-    rows = [(u, e) for u, e in rows if datetime.fromisoformat(e) > now()]
-    if not rows:
+        tenant_rows = c.execute("""
+            SELECT tm.tenant_id, t.tenant_name, tm.channel_id, tc.channel_name,
+                   tm.user_id, tm.expires_at
+            FROM tenant_memberships tm
+            LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
+            LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+            WHERE tm.status='active' AND tm.expires_at>?
+            ORDER BY tm.expires_at
+        """, (current,)).fetchall()
+    lines = []
+    if tenant_rows:
+        lines.append("🏆 AKTİF VIP ÜYELER")
+        for r in tenant_rows[:100]:
+            expiry = datetime.fromisoformat(r['expires_at'])
+            lines.append(
+                f"• {r['user_id']} — {expiry:%d.%m.%Y %H:%M}\n"
+                f"  {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or r['channel_id']}"
+            )
+    if legacy_rows:
+        lines.append("\n📋 Eski sistem üyeleri")
+        for r in legacy_rows[:100]:
+            expiry = datetime.fromisoformat(r['expires_at'])
+            lines.append(f"• {r['user_id']} — {expiry:%d.%m.%Y %H:%M}")
+    if not lines:
         await update.message.reply_text("Aktif VIP üye yok.")
         return
-    await update.message.reply_text(
-        "Aktif VIP üyeler:\n" + "\n".join(
-            f"• {u} — {datetime.fromisoformat(e):%d.%m.%Y %H:%M}" for u, e in rows[:100]
-        )
-    )
+    await update.message.reply_text("\n".join(lines)[:4000])
 
 
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -952,7 +973,9 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # VIP applications are accepted only in the public chat group, never in channels.
-    if body.casefold() in ("!vip", "vip") and chat.type in ("group", "supergroup") and channel_type == "chat":
+    # Turkish capital İ casefolds to "i" + combining dot; remove that dot so !VİP works.
+    vip_trigger = body.casefold().replace("\u0307", "")
+    if vip_trigger in ("!vip", "vip") and chat.type in ("group", "supergroup") and channel_type == "chat":
         user = update.effective_user
         if not user:
             return
@@ -982,7 +1005,12 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(user.id, "VIP başvurun yöneticilere iletildi. Sonuç sana özel mesajla bildirilecek.")
         except Exception:
-            await msg.reply_text("Başvurun alındı. Botla özel sohbeti başlatmak için botun profiline girip /start yaz.")
+            bot_username = (await context.bot.get_me()).username
+            if bot_username:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Botu aç", url=f"https://t.me/{bot_username}?start=vip")]])
+                await msg.reply_text("Başvurun alındı. Onay ve davet bağlantısını özel mesajla alabilmek için botu bir kez açman gerekiyor.", reply_markup=kb)
+            else:
+                await msg.reply_text("Başvurun alındı. Onay ve davet bağlantısını özel mesajla alabilmek için botu bir kez açman gerekiyor.")
         return
 
 
