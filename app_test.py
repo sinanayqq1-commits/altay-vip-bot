@@ -188,6 +188,20 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    chat = update.effective_chat
+    # /start grup içinde kullanılırsa menüyü gruba dökme; özel sohbet bağlantısı ver.
+    if chat and chat.type in ("group", "supergroup"):
+        bot_username = (await context.bot.get_me()).username
+        if bot_username:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🤖 VIP işlemlerini özelden aç",
+                url=f"https://t.me/{bot_username}?start=vipc_{chat.id}"
+            )]])
+            await update.effective_message.reply_text(
+                "VIP başvurusu ve üyelik işlemleri özel mesajdan yapılır. Aşağıdaki butona bas.",
+                reply_markup=kb
+            )
+        return
     # Kanal VIP butonundan gelen derin bağlantı: başvuru özel sohbette alınır,
     # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
     if context.args and (context.args[0].startswith("vipc_") or context.args[0].startswith("vip_")):
@@ -972,45 +986,22 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(caption, reply_markup=kb)
         return
 
-    # VIP applications are accepted only in the public chat group, never in channels.
-    # Turkish capital İ casefolds to "i" + combining dot; remove that dot so !VİP works.
+    # !VIP yalnızca özel sohbeti açan bağlantıyı paylaşır. Başvuru kaydı,
+    # butona basılıp bot özelden açıldığında start() içinde oluşturulur.
     vip_trigger = body.casefold().replace("\u0307", "")
     if vip_trigger in ("!vip", "vip") and chat.type in ("group", "supergroup") and channel_type == "chat":
-        user = update.effective_user
-        if not user:
+        bot_username = (await context.bot.get_me()).username
+        if not bot_username:
+            await msg.reply_text("Bot bağlantısı şu an oluşturulamadı. Lütfen biraz sonra tekrar dene.")
             return
-        with connect() as c:
-            existing = c.execute("""SELECT status FROM tenant_applications
-                WHERE tenant_id=? AND channel_id=? AND user_id=?
-                ORDER BY application_id DESC LIMIT 1""", (tenant_id, chat.id, user.id)).fetchone()
-            if existing and existing[0] == "pending":
-                await msg.reply_text("VIP başvurun zaten yöneticilere iletildi.")
-                return
-            cur = c.execute("""INSERT INTO tenant_applications
-                (tenant_id,channel_id,user_id,username,full_name,status,created_at)
-                VALUES(?,?,?,?,?,'pending',?)""",
-                (tenant_id, chat.id, user.id, user.username or "", user.full_name, now().isoformat()))
-            app_id = cur.lastrowid
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ 30 gün onayla", callback_data=f"tenantapp:approve:{app_id}"),
-            InlineKeyboardButton("❌ Reddet", callback_data=f"tenantapp:reject:{app_id}")
-        ]])
-        admin_text = (f"🆕 VIP başvurusu\nKanal: {channel_name}\nAd: {user.full_name}\n"
-                      f"Kullanıcı: @{user.username or 'yok'}\nID: {user.id}")
-        for aid in tenant_manager_ids(tenant_id, chat.id):
-            try:
-                await context.bot.send_message(aid, admin_text, reply_markup=kb)
-            except Exception:
-                log.exception("VIP başvurusu yöneticiye iletilemedi: %s", aid)
-        try:
-            await context.bot.send_message(user.id, "VIP başvurun yöneticilere iletildi. Sonuç sana özel mesajla bildirilecek.")
-        except Exception:
-            bot_username = (await context.bot.get_me()).username
-            if bot_username:
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Botu aç", url=f"https://t.me/{bot_username}?start=vip")]])
-                await msg.reply_text("Başvurun alındı. Onay ve davet bağlantısını özel mesajla alabilmek için botu bir kez açman gerekiyor.", reply_markup=kb)
-            else:
-                await msg.reply_text("Başvurun alındı. Onay ve davet bağlantısını özel mesajla alabilmek için botu bir kez açman gerekiyor.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "🤖 VIP başvurusunu özelden aç",
+            url=f"https://t.me/{bot_username}?start=vipc_{chat.id}"
+        )]])
+        await msg.reply_text(
+            "VIP başvurusu, üyelik durumu ve destek işlemleri özel mesajdan yürütülür. Başlamak için butona bas.",
+            reply_markup=kb
+        )
         return
 
 
