@@ -2536,16 +2536,17 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
             if not tenant or tenant["status"] != "active":
                 skipped += 1
                 continue
-            brand = (tenant["tenant_name"] or "VIP").strip()[:60]
+            brand = (tenant["tenant_name"] or "MEDYAECAN").strip()[:60]
             promo_text = settings.get("promo_text") or (
-                f"👑 {brand} | VIP ÜYELİK\n\n"
-                "⚽ Özel içerikler ve düzenli paylaşımlar\n"
-                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\n\n"
-                "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
+                f"🧡 {brand} | YAZILIM & OTOMASYON\n\n"
+                "🤖 Telegram botları ve VIP kanal yönetim sistemleri\n"
+                "⚙️ İşletmelere özel otomasyon çözümleri\n"
+                "💼 Paketlerimizi ve güncel satış fiyatlarımızı görmek için aşağıdaki butona dokun.\n\n"
+                "MEDYAECAN — Software & Automation"
             )
-            button_text = settings.get("promo_button") or "💎 VIP başvurusu"
+            button_text = settings.get("promo_button") or "🧡 Paketleri ve fiyatları gör"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                button_text[:60], url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+                button_text[:60], url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
