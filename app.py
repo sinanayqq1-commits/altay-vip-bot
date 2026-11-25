@@ -145,6 +145,9 @@ def init_db():
                     (channel_id,tenant_id,channel_name,channel_type,status)
                     VALUES(?,?,?,?,?)""",
                     (legacy_channel, "legacy_single", "Eski ana kanal", "legacy", "active"))
+                c.execute("UPDATE tenants SET tenant_name='GOLDEN VIP', status='active' WHERE tenant_id='legacy_single'")
+                c.execute("UPDATE tenant_channels SET channel_name='GOLDEN VIP' WHERE channel_id=? AND tenant_id='legacy_single'", (legacy_channel,))
+                c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
 
@@ -412,13 +415,14 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         if admin(uid):
             with connect() as c:
                 tenants = c.execute(
-                    "SELECT tenant_id,tenant_name,status FROM tenants ORDER BY tenant_name"
+                    "SELECT tenant_id,tenant_name,status FROM tenants WHERE status='active' ORDER BY tenant_name"
                 ).fetchall()
                 channels = c.execute("""
                     SELECT t.tenant_name, ch.channel_name, ch.channel_id,
                            ch.channel_type, ch.owner_user_id
                     FROM tenant_channels ch
                     JOIN tenants t ON t.tenant_id=ch.tenant_id
+                    WHERE t.status='active' AND ch.status='active'
                     ORDER BY t.tenant_name, ch.channel_name
                 """).fetchall()
             lines = ["🏢 MÜŞTERİLER"]
