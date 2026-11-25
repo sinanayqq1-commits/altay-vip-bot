@@ -2679,6 +2679,48 @@ async def create_tenant_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.effective_message.reply_text(f'✅ Müşteri oluşturuldu.\nAd: {name}\nMüşteri kodu: {tid}\nSahip ID: {owner_id}\nSahip /admin ile paneli açabilir.')
 
 
+async def tenant_license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update):
+        return
+    if len(context.args) != 2:
+        await update.effective_message.reply_text("Kullanım: /lisansver MUSTERI_KODU GUN")
+        return
+    tenant_id = context.args[0].strip()
+    try:
+        days = int(context.args[1])
+        if not 1 <= days <= 3650:
+            raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Gün sayısı 1–3650 arasında olmalı.")
+        return
+    expires = now() + timedelta(days=days)
+    with connect() as c:
+        row = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not row:
+            await update.effective_message.reply_text("Müşteri bulunamadı.")
+            return
+        c.execute("UPDATE tenants SET license_status='active',license_expires_at=?,plan_name='standart',status='active' WHERE tenant_id=?",
+                  (expires.isoformat(), tenant_id))
+    log_admin_action(update.effective_user.id, "Müşteri lisansı uzatıldı", None,
+                     f"tenant={tenant_id}; gün={days}; bitiş={expires.isoformat()}")
+    await update.effective_message.reply_text(f"✅ {row['tenant_name']} lisansı {days} gün uzatıldı. Bitiş: {expires:%d.%m.%Y %H:%M}")
+
+
+async def tenant_license_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update):
+        return
+    with connect() as c:
+        rows = c.execute("""SELECT tenant_id,tenant_name,plan_name,license_status,license_expires_at
+            FROM tenants ORDER BY tenant_name""").fetchall()
+    lines = ["🔐 MÜŞTERİ LİSANSLARI"]
+    for row in rows:
+        exp = datetime.fromisoformat(row["license_expires_at"]) if row["license_expires_at"] else None
+        state = "Süresiz" if exp is None else ("Aktif" if exp > now() and row["license_status"] == "active" else "Süresi dolmuş")
+        lines.append(f"• {row['tenant_name']} ({row['tenant_id']})\n  Paket: {row['plan_name']} | {state}" +
+                     (f" | Bitiş: {exp:%d.%m.%Y}" if exp else ""))
+    await update.effective_message.reply_text("\n".join(lines)[:3900])
+
+
 async def list_tenants_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
     with connect() as c:
@@ -3573,6 +3615,8 @@ def main():
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
     app.add_handler(CommandHandler('musteriekle', create_tenant_command))
     app.add_handler(CommandHandler('musteriler', list_tenants_command))
+    app.add_handler(CommandHandler("lisansver", tenant_license_command))
+    app.add_handler(CommandHandler("lisanslar", tenant_license_status))
     app.add_handler(CommandHandler('musterisec', select_tenant_command))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
