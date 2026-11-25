@@ -1864,9 +1864,61 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             state = "ÖDENDİ" if item["status"] == "paid" else "ÖDEME BEKLİYOR"
             lines.append(f"#{item['sale_id']} | {item['tenant_name'] or item['tenant_id']} | {item['package_name']} | {item['amount']:,.2f} TL | {state}")
         if not sales: lines.append("Henüz satış kaydı yok.")
-        lines += ["", "Yeni satış: /satisekle MUSTERI_KODU starter|professional|vip GUN [TUTAR]",
-                  "Ödeme onayı: /odemeonay SATIS_ID", "Liste: /satislar"]
-        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        lines += ["", "Satışları aşağıdaki butonlarla filtreleyebilirsin."]
+        sales_buttons = [
+            [InlineKeyboardButton("⏳ Bekleyen ödemeler", callback_data="tenantpanel:salesfilter:pending")],
+            [InlineKeyboardButton("✅ Onaylanan satışlar", callback_data="tenantpanel:salesfilter:paid")],
+            [InlineKeyboardButton("📋 Tüm satışlar", callback_data="tenantpanel:salesfilter:all")],
+            [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
+        ]
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(sales_buttons))
+
+    elif q.data.startswith("tenantpanel:salesfilter:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.", show_alert=True); return
+        status = q.data.split(":")[2]
+        if status not in ("pending", "paid", "all"):
+            await q.answer("Filtre geçersiz.", show_alert=True); return
+        where = "" if status == "all" else "WHERE s.status=?"
+        params = () if status == "all" else (status,)
+        with connect() as conn:
+            rows = conn.execute("""SELECT s.sale_id,s.tenant_id,t.tenant_name,s.package_name,
+                s.duration_days,s.amount,s.status,s.created_at,s.paid_at
+                FROM tenant_sales s LEFT JOIN tenants t ON t.tenant_id=s.tenant_id """ +
+                where + " ORDER BY s.sale_id DESC LIMIT 25", params).fetchall()
+        title = {"pending":"⏳ BEKLEYEN ÖDEMELER","paid":"✅ ONAYLANAN SATIŞLAR","all":"📋 TÜM SATIŞLAR"}[status]
+        lines = ["💳 MEDYAECAN — " + title, ""]
+        buttons = []
+        for row in rows:
+            state = "ÖDEME BEKLİYOR" if row["status"] == "pending" else "ÖDENDİ"
+            label = row["tenant_name"] or row["tenant_id"]
+            lines.append(f"#{row['sale_id']} | {label} | {row['package_name']} | {row['amount']:,.2f} TL | {state}")
+            buttons.append([InlineKeyboardButton(f"🧾 #{row['sale_id']} — {label}", callback_data=f"tenantpanel:saleview:{row['sale_id']}")])
+        if not rows: lines.append("Bu bölümde satış kaydı yok.")
+        buttons += [[InlineKeyboardButton("⬅️ Ödeme özeti", callback_data="tenantpanel:payments")],
+                    [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]]
+        await q.edit_message_text("\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith("tenantpanel:saleview:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.", show_alert=True); return
+        sale_id = int(q.data.split(":")[2])
+        with connect() as conn:
+            row = conn.execute("""SELECT s.*,t.tenant_name,t.license_expires_at
+                FROM tenant_sales s LEFT JOIN tenants t ON t.tenant_id=s.tenant_id
+                WHERE s.sale_id=?""", (sale_id,)).fetchone()
+        if not row:
+            await q.answer("Satış bulunamadı.", show_alert=True); return
+        state = "ÖDEME BEKLİYOR" if row["status"] == "pending" else "ÖDENDİ"
+        body = (f"🧾 SATIŞ #{sale_id}\\nMüşteri: {row['tenant_name'] or row['tenant_id']}\\n"
+                f"Paket: {PLAN_CATALOG.get(row['package_name'], {}).get('name', row['package_name'])}\\n"
+                f"Süre: {row['duration_days']} gün\\nTutar: {row['amount']:,.2f} TL\\nDurum: {state}")
+        actions = []
+        if row["status"] == "pending":
+            actions.append([InlineKeyboardButton("✅ Ödeme alındı / Onayla", callback_data=f"tenantpanel:saleconfirm:{sale_id}")])
+        actions += [[InlineKeyboardButton("⬅️ Satış listesi", callback_data="tenantpanel:salesfilter:all")],
+                    [InlineKeyboardButton("💳 Ödeme özeti", callback_data="tenantpanel:payments")]]
+        await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup(actions))
 
     elif q.data == "tenantpanel:expiring":
         current_dt = now()
