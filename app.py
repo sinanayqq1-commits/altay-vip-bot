@@ -14,6 +14,7 @@ TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Istanbul"))
 DB = os.getenv("DB_PATH", "altay_vip.sqlite3")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+LAST_ERROR_NOTICE = None
 
 class SecretRedactionFilter(logging.Filter):
     """Remove the Telegram bot token from every emitted log record."""
@@ -1498,7 +1499,12 @@ async def manual_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def application_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    global LAST_ERROR_NOTICE
     log.error("Telegram uygulama hatası", exc_info=context.error)
+    current = now()
+    if LAST_ERROR_NOTICE and (current - LAST_ERROR_NOTICE).total_seconds() < 600:
+        return
+    LAST_ERROR_NOTICE = current
     error_name = type(context.error).__name__ if context.error else "UnknownError"
     for admin_id in ADMIN_IDS:
         try:
