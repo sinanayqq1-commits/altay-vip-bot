@@ -655,6 +655,10 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Geçerli bir kullanıcı ID'si gir.")
         return
 
+    if uid in ADMIN_IDS:
+        await update.message.reply_text("⛔ Güvenlik koruması: Ana yönetici hesabı bu komutla silinemez veya kanaldan çıkarılamaz.")
+        return
+
     with connect() as c:
         cur = c.execute(
             "UPDATE memberships SET status='revoked' WHERE user_id=? AND status='active'", (uid,)
