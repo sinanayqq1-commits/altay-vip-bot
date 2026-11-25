@@ -1776,8 +1776,11 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not chat or not msg:
         return
 
-    if not user or not admin(user.id):
-        await msg.reply_text("Bu kurulum komutu yalnızca ana yöneticiye açık.")
+    if not user:
+        return
+    tenant_id = current_tenant_id(user.id, context)
+    if not tenant_id or not manager_can_access(user.id, tenant_id):
+        await msg.reply_text('Bu kanal kaydı için müşteri yetkin bulunmuyor. Ana yönetici önce /musteriekle ile müşteri oluşturmalı.')
         return
 
     if len(context.args) not in (1, 2) or context.args[0].lower() not in ("sohbet", "genel", "vip"):
@@ -1818,15 +1821,66 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     with connect() as c:
-        tenant_id = "legacy_single" if c.execute("SELECT 1 FROM tenants WHERE tenant_id='legacy_single' AND status='active'").fetchone() else "altay_demo"
-        tenant_name = "GOLDEN VIP" if tenant_id == "legacy_single" else "ALTAY VIP"
-        c.execute("INSERT OR IGNORE INTO tenants(tenant_id,tenant_name,status,created_at) VALUES(?,?, 'active',?)", (tenant_id, tenant_name, now().isoformat()))
-        c.execute("""INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+        existing = c.execute('SELECT tenant_id FROM tenant_channels WHERE channel_id=?', (target_chat.id,)).fetchone()
+        if existing and existing['tenant_id'] != tenant_id:
+            await msg.reply_text('⛔ Bu kanal başka bir müşteriye kayıtlı. Güvenlik için taşınmadı.'); return
+        c.execute(\"\"\"INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,'active') ON CONFLICT(channel_id) DO UPDATE SET
-            tenant_id=excluded.tenant_id, channel_name=excluded.channel_name,
-            channel_type=excluded.channel_type, owner_user_id=COALESCE(excluded.owner_user_id,tenant_channels.owner_user_id), status='active'""",
-            (target_chat.id, tenant_id, "GOLDEN CLUB SOHBET" if role == "sohbet" else names[role], "chat" if role == "sohbet" else role, user.id if user else None))
+            channel_name=excluded.channel_name, channel_type=excluded.channel_type,
+            owner_user_id=COALESCE(tenant_channels.owner_user_id,excluded.owner_user_id), status='active'\"\"\",
+            (target_chat.id, tenant_id, 'GOLDEN CLUB SOHBET' if role == 'sohbet' else names[role], 'chat' if role == 'sohbet' else role, user.id))
+        c.execute(\"\"\"INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+            VALUES(?,?,'owner',NULL,'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'\"\"\",
+            (tenant_id,user.id,now().isoformat()))
     await msg.reply_text(f"✅ {names[role]} kaydedildi.\nTelegram ID: {target_chat.id}\nBotun kanalda yönetici olduğundan emin ol.")
+
+
+def make_tenant_id(name, owner_id):
+    import re
+    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')[:24] or 'musteri'
+    return f'{slug}_{int(owner_id)}'
+
+
+async def create_tenant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    raw = update.effective_message.text.partition(' ')[2].strip()
+    parts = [x.strip() for x in raw.split('|', 1)]
+    if len(parts) != 2 or not parts[0] or not parts[1].isdigit():
+        await update.effective_message.reply_text('Kullanım: /musteriekle Müşteri Adı | TELEGRAM_KULLANICI_ID'); return
+    name, owner_id = parts[0][:80], int(parts[1])
+    if owner_id <= 0:
+        await update.effective_message.reply_text('Geçerli Telegram kullanıcı ID gir.'); return
+    tid = make_tenant_id(name, owner_id)
+    with connect() as c:
+        if c.execute('SELECT 1 FROM tenants WHERE tenant_id=?', (tid,)).fetchone():
+            await update.effective_message.reply_text('Bu müşteri zaten kayıtlı: ' + tid); return
+        c.execute('INSERT INTO tenants(tenant_id,tenant_name,status,created_at) VALUES(?,?,\'active\',?)', (tid,name,now().isoformat()))
+        c.execute('INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at) VALUES(?,?,\'owner\',NULL,\'active\',?)', (tid,owner_id,now().isoformat()))
+    log_admin_action(update.effective_user.id,'Müşteri oluşturuldu',owner_id,f'{name}; {tid}')
+    await update.effective_message.reply_text(f'✅ Müşteri oluşturuldu.\\nAd: {name}\\nMüşteri kodu: {tid}\\nSahip ID: {owner_id}\\nSahip /admin ile paneli açabilir.')
+
+
+async def list_tenants_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    with connect() as c:
+        rows = c.execute('SELECT t.tenant_id,t.tenant_name,COUNT(ch.channel_id) AS channels FROM tenants t LEFT JOIN tenant_channels ch ON ch.tenant_id=t.tenant_id AND ch.status=\'active\' WHERE t.status=\'active\' GROUP BY t.tenant_id ORDER BY t.tenant_name').fetchall()
+    lines = ['AKTİF MÜŞTERİLER'] + [f"• {r['tenant_name']} — {r['tenant_id']} — {r['channels']} kanal" for r in rows]
+    await update.effective_message.reply_text('\\n'.join(lines)[:3900] if rows else 'Aktif müşteri yok.')
+
+
+async def select_tenant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if len(context.args) != 1:
+        await update.effective_message.reply_text('Kullanım: /musterisec MUSTERI_KODU'); return
+    tid = context.args[0].strip()
+    if not admin(uid) and tid not in tenant_ids_for_user(uid):
+        await update.effective_message.reply_text('Bu müşteriye erişim yetkin yok.'); return
+    with connect() as c:
+        row = c.execute('SELECT tenant_name FROM tenants WHERE tenant_id=? AND status=\'active\'', (tid,)).fetchone()
+    if not row:
+        await update.effective_message.reply_text('Aktif müşteri bulunamadı.'); return
+    context.user_data['selected_tenant_id'] = tid
+    await update.effective_message.reply_text(f"✅ Seçili müşteri: {row['tenant_name']} ({tid})")
 
 
 def tenant_for_channel(cid):
@@ -2369,6 +2423,9 @@ def main():
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("kimim", whoami))
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
+    app.add_handler(CommandHandler('musteriekle', create_tenant_command))
+    app.add_handler(CommandHandler('musteriler', list_tenants_command))
+    app.add_handler(CommandHandler('musterisec', select_tenant_command))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatJoinRequestHandler(handle_vip_join_request))
