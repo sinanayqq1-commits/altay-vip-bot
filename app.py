@@ -393,9 +393,9 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🛠 ALTAY VIP BOT — YÖNETİCİ PANELİ\n\n"
-        "Bu sürümde müşteri/kanal kayıtları ve yetki kapsamları görüntülenebilir.\n"
-        "Mevcut tek kanal VIP komutları ana yönetici hesabında korunur.\n"
-        "Çok kanallı üyelik ve paylaşım işlemleri sonraki aşamada açılacaktır.",
+        "VIP üyeleri ve bekleyen başvuruları buradan yönetebilirsin.\n"
+        "Müşteri/kanal kayıtlarını, yönetici yetkilerini ve sistem durumunu görüntüleyebilirsin.\n"
+        "Mevcut üyelik kayıtları korunur; işlemler yetki kontrolüyle yürütülür.",
         reply_markup=admin_panel_keyboard()
     )
 
