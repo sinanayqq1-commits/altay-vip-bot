@@ -2546,23 +2546,37 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
                 skipped += 1
                 continue
             brand = (tenant["tenant_name"] or "MEDYAECAN").strip()[:60]
-            promo_text = settings.get("promo_text") or (
+            promo_text = (
                 f"🧡 {brand} | YAZILIM & OTOMASYON\n\n"
                 "🤖 Telegram botları ve VIP kanal yönetim sistemleri\n"
                 "⚙️ İşletmelere özel otomasyon çözümleri\n"
                 "💼 Paketlerimizi ve güncel satış fiyatlarımızı görmek için aşağıdaki butona dokun.\n\n"
                 "MEDYAECAN — Software & Automation"
             )
-            button_text = settings.get("promo_button") or "🧡 Paketleri ve fiyatları gör"
+            button_text = "🧡 Paketleri ve fiyatları gör"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                 button_text[:60], url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
-                await context.bot.send_photo(chat_id=group_id, photo=photo_id,
+                promo_message = await context.bot.send_photo(chat_id=group_id, photo=photo_id,
                                               caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb)
             else:
-                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
+                promo_message = await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
+            try:
+                chat_info = await context.bot.get_chat(group_id)
+                pinned = chat_info.pinned_message
+                if pinned and (
+                    "VIP" in (pinned.text or "").upper()
+                    or "VIP" in (pinned.caption or "").upper()
+                    or "BAŞVURULARINIZI BEKLİYORUZ" in (pinned.text or "").upper()
+                ):
+                    await context.bot.unpin_chat_message(chat_id=group_id, message_id=pinned.message_id)
+                await context.bot.pin_chat_message(
+                    chat_id=group_id, message_id=promo_message.message_id, disable_notification=True
+                )
+            except Exception:
+                log.exception("MEDYAECAN test tanıtımı sabitlenemedi: group=%s", group_id)
             sent += 1
         except Exception as exc:
             failed += 1
