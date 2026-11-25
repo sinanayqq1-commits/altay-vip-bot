@@ -3,7 +3,7 @@ from urllib.parse import quote
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler
 )
@@ -456,7 +456,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if can_open_admin_panel(user.id):
         rows.append([InlineKeyboardButton("🛡 Yönetim Panelini Aç", callback_data="home:admin")])
+    persistent_menu = ReplyKeyboardMarkup(
+        [[KeyboardButton("🚀 BAŞLAT / ANA MENÜ")]],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Menüyü açmak için butona dokun"
+    )
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(rows))
+    await update.message.reply_text("Ana menüye dönmek için aşağıdaki butonu kullanabilirsin.", reply_markup=persistent_menu)
+
+
+async def start_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.args = []
+    await start(update, context)
 
 
 async def approve(context, uid, days=30):
@@ -3447,6 +3459,7 @@ def main():
     app = Application.builder().token(TOKEN).post_init(post_init).build()
     app.add_error_handler(application_error_handler)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex(r"^🚀 BAŞLAT / ANA MENÜ$"), start_menu_button))
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("kimim", whoami))
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
