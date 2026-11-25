@@ -147,6 +147,16 @@ def init_db():
                     (legacy_channel, "legacy_single", "Eski ana kanal", "legacy", "active"))
                 c.execute("UPDATE tenants SET tenant_name='GOLDEN VIP', status='active' WHERE tenant_id='legacy_single'")
                 c.execute("UPDATE tenant_channels SET channel_name='GOLDEN VIP' WHERE channel_id=? AND tenant_id='legacy_single'", (legacy_channel,))
+                # Ana yöneticiyi GOLDEN VIP kanalının kayıtlı sahibi/yöneticisi olarak tanımla.
+                for owner_id in ADMIN_IDS:
+                    c.execute("UPDATE tenant_channels SET owner_user_id=? WHERE channel_id=? AND tenant_id='legacy_single'",
+                              (owner_id, legacy_channel))
+                    c.execute("""INSERT INTO tenant_admins
+                        (tenant_id,user_id,role,channel_id,status,added_at)
+                        VALUES('legacy_single',?,'owner',?,'active',?)
+                        ON CONFLICT(tenant_id,user_id,role,channel_id)
+                        DO UPDATE SET status='active'""",
+                        (owner_id, legacy_channel, now().isoformat()))
                 c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
