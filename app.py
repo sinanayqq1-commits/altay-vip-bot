@@ -682,13 +682,13 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             return
         expiry = datetime.fromisoformat(row['expires_at'])
         kb = [
-            [InlineKeyboardButton('➕ 30 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:30'),
-             InlineKeyboardButton('➕ 60 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:60')],
-            [InlineKeyboardButton('➕ 90 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:90')],
+            [InlineKeyboardButton('➕ 30 gün uzat', callback_data=f'tenantpanel:extendcust:{channel_value}:{member_id}:30'),
+             InlineKeyboardButton('➕ 60 gün uzat', callback_data=f'tenantpanel:extendcust:{channel_value}:{member_id}:60')],
+            [InlineKeyboardButton('➕ 90 gün uzat', callback_data=f'tenantpanel:extendcust:{channel_value}:{member_id}:90')],
         ]
         if manager_has_permission(uid, tid, channel_value, 'payments'):
-            kb.append([InlineKeyboardButton('💳 Ödeme kaydet', callback_data=f'tenantcust:pay:{channel_value}:{member_id}')])
-        kb += [[InlineKeyboardButton('🚫 VIP erişimini kaldır', callback_data=f'tenantcust:removeask:{channel_value}:{member_id}')],
+            kb.append([InlineKeyboardButton('💳 Ödeme kaydet', callback_data=f'tenantpanel:paycust:{channel_value}:{member_id}')])
+        kb += [[InlineKeyboardButton('🚫 VIP erişimini kaldır', callback_data=f'tenantpanel:removeaskcust:{channel_value}:{member_id}')],
                [InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]]
         await q.edit_message_text(
             f'👤 ÜYE DETAYI\\n\\nAd: {row["username"] or "—"}\\nTelegram ID: {member_id}'
@@ -697,7 +697,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
-    elif q.data.startswith('tenantcust:extend:'):
+    elif q.data.startswith('tenantpanel:extendcust:'):
         parts = q.data.split(':')
         try:
             channel_value, member_id, days = int(parts[2]), int(parts[3]), int(parts[4])
@@ -732,7 +732,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         except (ValueError, IndexError, TypeError):
             await q.answer('Üyelik uzatılamadı; kayıt aktif olmayabilir.', show_alert=True)
 
-    elif q.data.startswith('tenantcust:pay:'):
+    elif q.data.startswith('tenantpanel:paycust:'):
         parts = q.data.split(':')
         try:
             channel_value, member_id = int(parts[2]), int(parts[3])
@@ -762,7 +762,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
                 callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')]])
         )
 
-    elif q.data.startswith('tenantcust:removeask:'):
+    elif q.data.startswith('tenantpanel:removeaskcust:'):
         parts = q.data.split(':')
         try:
             channel_value, member_id = int(parts[2]), int(parts[3])
@@ -785,11 +785,11 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         await q.edit_message_text(
             f'⚠️ {member_id} numaralı üyenin VIP erişimi bu kanaldan kaldırılacak. Onaylıyor musun?',
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('Evet, erişimi kaldır', callback_data=f'tenantcust:remove:{channel_value}:{member_id}')],
+                [InlineKeyboardButton('Evet, erişimi kaldır', callback_data=f'tenantpanel:removecust:{channel_value}:{member_id}')],
                 [InlineKeyboardButton('Vazgeç', callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')]])
         )
 
-    elif q.data.startswith('tenantcust:remove:'):
+    elif q.data.startswith('tenantpanel:removecust:'):
         parts = q.data.split(':')
         try:
             channel_value, member_id = int(parts[2]), int(parts[3])
