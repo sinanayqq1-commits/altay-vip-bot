@@ -2734,6 +2734,109 @@ async def list_manager_roles(update: Update, context: ContextTypes.DEFAULT_TYPE)
     lines=["🛡 AKTİF YÖNETİCİLER"]+[f"• {r['user_id']} — {r['role']} — {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or 'Genel'}" for r in rows]
     await update.effective_message.reply_text("\n".join(lines)[:4000] if rows else "Ek yönetici kaydı yok.")
 
+async def customer_team_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_can_access(uid, tid) or not manager_has_permission(uid, tid, None, "settings"):
+        await update.effective_message.reply_text("Ekip yönetimi yetkin bulunmuyor.")
+        return
+    scope = tenant_channel_scope(uid, tid)
+    where, params = scoped_channel_filter(scope, "a.channel_id")
+    with connect() as conn:
+        rows = conn.execute("""SELECT a.user_id,a.role,a.channel_id,ch.channel_name
+            FROM tenant_admins a LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
+            WHERE a.tenant_id=? AND a.status='active'""" + where +
+            " ORDER BY a.user_id,a.role", (tid,) + params).fetchall()
+    lines = ["🛡 MÜŞTERİ EKİBİ"]
+    lines += [f"• {r['user_id']} — {r['role']} — {r['channel_name'] or 'Genel'} (Kanal: {r['channel_id'] or 'genel'})" for r in rows]
+    if not rows:
+        lines.append("Henüz ekip yetkilisi eklenmemiş.")
+    lines += ["", "Yetki verme: /ekipyetkiver ID rol KANAL_ID",
+              "Yetki kaldırma: /ekipyetkikaldir ID KANAL_ID",
+              "Roller: manager, moderator, finance, publisher"]
+    await update.effective_message.reply_text("\\n".join(lines)[:4000])
+
+
+async def customer_team_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Bu komutu botla özel sohbetten kullan.")
+        return
+    if len(context.args) != 3:
+        await update.effective_message.reply_text("Kullanım: /ekipyetkiver KULLANICI_ID manager|moderator|finance|publisher KANAL_ID")
+        return
+    try:
+        target, role, cid = int(context.args[0]), context.args[1].lower(), int(context.args[2])
+        if target <= 0 or cid == 0 or role not in ("manager", "moderator", "finance", "publisher"):
+            raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Kullanıcı ID, rol veya kanal ID geçersiz.")
+        return
+    with connect() as conn:
+        channel = conn.execute("SELECT tenant_id,channel_name FROM tenant_channels WHERE channel_id=? AND status='active'", (cid,)).fetchone()
+        if not channel:
+            await update.effective_message.reply_text("Aktif kanal bulunamadı.")
+            return
+        tid = channel["tenant_id"]
+        actor_roles = conn.execute("""SELECT role,channel_id FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND status='active'""", (tid, uid)).fetchall()
+        target_is_owner = conn.execute("""SELECT 1 FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND role='owner' AND status='active'""", (tid, target)).fetchone()
+        if not actor_roles or not manager_can_access(uid, tid, cid) or not manager_has_permission(uid, tid, cid, "settings"):
+            await update.effective_message.reply_text("Bu kanal üzerinde ekip yönetim yetkin yok.")
+            return
+        actor_is_owner = any(r["role"] == "owner" for r in actor_roles)
+        if role == "manager" and not actor_is_owner:
+            await update.effective_message.reply_text("Manager yetkisini yalnızca müşteri sahibi verebilir.")
+            return
+        if target in ADMIN_IDS or target_is_owner:
+            await update.effective_message.reply_text("Ana yönetici veya müşteri sahibi yetkisi değiştirilemez.")
+            return
+        conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+            VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
+            DO UPDATE SET status='active'""", (tid,target,role,cid,now().isoformat()))
+    log_admin_action(uid, "Müşteri ekibine yetki verildi", target, f"{role}; tenant={tid}; kanal={cid}")
+    await update.effective_message.reply_text(f"✅ {target} kullanıcısına {channel['channel_name']} kanalında {role} yetkisi verildi.")
+
+
+async def customer_team_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Bu komutu botla özel sohbetten kullan.")
+        return
+    if len(context.args) != 2:
+        await update.effective_message.reply_text("Kullanım: /ekipyetkikaldir KULLANICI_ID KANAL_ID")
+        return
+    try:
+        target, cid = int(context.args[0]), int(context.args[1])
+        if target <= 0 or cid == 0:
+            raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Kullanıcı ID veya kanal ID geçersiz.")
+        return
+    with connect() as conn:
+        channel = conn.execute("SELECT tenant_id,channel_name FROM tenant_channels WHERE channel_id=? AND status='active'", (cid,)).fetchone()
+        if not channel:
+            await update.effective_message.reply_text("Aktif kanal bulunamadı.")
+            return
+        tid = channel["tenant_id"]
+        if not manager_can_access(uid, tid, cid) or not manager_has_permission(uid, tid, cid, "settings"):
+            await update.effective_message.reply_text("Bu kanalın ekibini yönetme yetkin yok.")
+            return
+        target_rows = conn.execute("""SELECT role FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND channel_id=? AND status='active'""", (tid,target,cid)).fetchall()
+        if not target_rows:
+            await update.effective_message.reply_text("Bu kanalda aktif ekip yetkisi bulunamadı.")
+            return
+        if any(row["role"] == "owner" for row in target_rows):
+            await update.effective_message.reply_text("Müşteri sahibi yetkisi kaldırılamaz.")
+            return
+        cur = conn.execute("""UPDATE tenant_admins SET status='inactive'
+            WHERE tenant_id=? AND user_id=? AND channel_id=? AND status='active'""", (tid,target,cid))
+    log_admin_action(uid, "Müşteri ekibinden yetki kaldırıldı", target, f"tenant={tid}; kanal={cid}; kayıt={cur.rowcount}")
+    await update.effective_message.reply_text(f"✅ {target} kullanıcısının {channel['channel_name']} kanalındaki {cur.rowcount} yetkisi kaldırıldı.")
+
+
 async def recurring_announcement_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
     raw=update.effective_message.text.partition(" ")[2].strip()
@@ -2849,6 +2952,9 @@ def main():
     app.add_handler(CommandHandler("yetkiver", grant_manager_role))
     app.add_handler(CommandHandler("yetkikaldir", revoke_manager_role))
     app.add_handler(CommandHandler("yetkililer", list_manager_roles))
+    app.add_handler(CommandHandler("ekip", customer_team_list))
+    app.add_handler(CommandHandler("ekipyetkiver", customer_team_grant))
+    app.add_handler(CommandHandler("ekipyetkikaldir", customer_team_revoke))
     app.add_handler(CommandHandler("otomatikduyuru", recurring_announcement_add))
     app.add_handler(CommandHandler("otomatikduyurular", recurring_announcement_list))
     app.add_handler(CommandHandler("otomatikduyurusil", recurring_announcement_delete))
