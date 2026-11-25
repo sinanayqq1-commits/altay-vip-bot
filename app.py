@@ -84,6 +84,12 @@ def init_db():
             channel_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL,
             amount REAL NOT NULL, note TEXT, paid_at TEXT NOT NULL,
             recorded_by INTEGER NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS tenant_sales(
+            sale_id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
+            package_name TEXT NOT NULL, duration_days INTEGER NOT NULL,
+            amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL, paid_at TEXT, created_by INTEGER NOT NULL,
+            confirmed_by INTEGER)""")
         c.execute("""CREATE TABLE IF NOT EXISTS admin_audit_log(
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
             actor_id INTEGER NOT NULL, action TEXT NOT NULL,
@@ -1782,16 +1788,20 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
     elif q.data == "tenantpanel:payments":
         with connect() as conn:
-            totals = conn.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments").fetchone()
-            recent = conn.execute("""SELECT user_id,amount,note,paid_at FROM membership_payments
-                ORDER BY paid_at DESC LIMIT 10""").fetchall()
-        lines = ["💳 ÖDEME TAKİBİ", "", f"Toplam kayıt: {totals[0]}", f"Toplam tahsilat: {totals[1]:,.2f} TL", "", "Son ödemeler:"]
-        for p in recent:
-            when = datetime.fromisoformat(p["paid_at"])
-            note = f" — {p['note']}" if p["note"] else ""
-            lines.append(f"• ID {p['user_id']} | {p['amount']:,.2f} TL | {when:%d.%m.%Y}{note}")
-        if not recent:
-            lines.append("Henüz ödeme kaydı yok.")
+            sales = conn.execute("""SELECT s.sale_id,t.tenant_name,s.tenant_id,s.package_name,
+                s.duration_days,s.amount,s.status FROM tenant_sales s
+                LEFT JOIN tenants t ON t.tenant_id=s.tenant_id ORDER BY s.sale_id DESC LIMIT 12""").fetchall()
+            totals = conn.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM tenant_sales WHERE status='paid'").fetchone()
+            pending = conn.execute("SELECT COUNT(*) FROM tenant_sales WHERE status='pending'").fetchone()[0]
+        lines = ["💳 MEDYAECAN — SATIŞ / ÖDEME TAKİBİ", "",
+                 f"Bekleyen ödeme: {pending}", f"Onaylanan satış: {totals[0]}",
+                 f"Toplam tahsilat: {totals[1]:,.2f} TL", "", "Son satışlar:"]
+        for item in sales:
+            state = "ÖDENDİ" if item["status"] == "paid" else "ÖDEME BEKLİYOR"
+            lines.append(f"#{item['sale_id']} | {item['tenant_name'] or item['tenant_id']} | {item['package_name']} | {item['amount']:,.2f} TL | {state}")
+        if not sales: lines.append("Henüz satış kaydı yok.")
+        lines += ["", "Yeni satış: /satisekle MUSTERI_KODU starter|professional|vip GUN [TUTAR]",
+                  "Ödeme onayı: /odemeonay SATIS_ID", "Liste: /satislar"]
         await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:expiring":
@@ -2769,6 +2779,92 @@ async def package_list_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.effective_message.reply_text("\n".join(lines))
 
 
+async def create_sale_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args) not in (3, 4):
+        await update.effective_message.reply_text("Kullanım: /satisekle MUSTERI_KODU starter|professional|vip GUN [TUTAR]")
+        return
+    tenant_id, package = context.args[0].strip(), context.args[1].lower()
+    try:
+        days = int(context.args[2])
+        if package not in PLAN_CATALOG: raise ValueError()
+        amount = float(context.args[3].replace(",", ".")) if len(context.args) == 4 else float(PLAN_CATALOG[package]["price"])
+        if not 1 <= days <= 3650 or amount <= 0: raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Paket starter/professional/vip olmalı; gün 1–3650, tutar pozitif olmalı.")
+        return
+    with connect() as c:
+        tenant = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not tenant:
+            await update.effective_message.reply_text("Müşteri bulunamadı.")
+            return
+        cur = c.execute("""INSERT INTO tenant_sales
+            (tenant_id,package_name,duration_days,amount,status,created_at,created_by)
+            VALUES(?,?,?,?, 'pending',?,?)""",
+            (tenant_id, package, days, amount, now().isoformat(), update.effective_user.id))
+        sale_id = cur.lastrowid
+    log_admin_action(update.effective_user.id, "Satış kaydı oluşturuldu", None,
+                     f"Satış #{sale_id}; {tenant_id}; {package}; {amount:.2f} TL; {days} gün; bekliyor")
+    await update.effective_message.reply_text(
+        f"🧾 SATIŞ KAYDI OLUŞTU\nSatış No: #{sale_id}\nMüşteri: {tenant['tenant_name']}\n"
+        f"Paket: {PLAN_CATALOG[package]['name']}\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR\n"
+        f"Ödeme gelince /odemeonay {sale_id} yaz.")
+
+
+async def confirm_sale_payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args) != 1 or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Kullanım: /odemeonay SATIS_ID")
+        return
+    sale_id = int(context.args[0])
+    with connect() as c:
+        sale = c.execute("SELECT * FROM tenant_sales WHERE sale_id=?", (sale_id,)).fetchone()
+        if not sale:
+            await update.effective_message.reply_text("Satış kaydı bulunamadı.")
+            return
+        if sale["status"] == "paid":
+            await update.effective_message.reply_text("Bu satışın ödemesi zaten onaylanmış.")
+            return
+        tenant = c.execute("SELECT tenant_name,license_expires_at FROM tenants WHERE tenant_id=?",
+                           (sale["tenant_id"],)).fetchone()
+        if not tenant:
+            await update.effective_message.reply_text("Müşteri kaydı bulunamadı; ödeme onaylanmadı.")
+            return
+        current = now()
+        old_expiry = datetime.fromisoformat(tenant["license_expires_at"]) if tenant["license_expires_at"] else None
+        start = old_expiry if old_expiry and old_expiry > current else current
+        expires = start + timedelta(days=sale["duration_days"])
+        c.execute("""UPDATE tenants SET plan_name=?,license_status='active',
+            license_expires_at=?,status='active' WHERE tenant_id=?""",
+            (sale["package_name"], expires.isoformat(), sale["tenant_id"]))
+        c.execute("UPDATE tenant_sales SET status='paid',paid_at=?,confirmed_by=? WHERE sale_id=?",
+                  (current.isoformat(), update.effective_user.id, sale_id))
+    log_admin_action(update.effective_user.id, "Satış ödemesi onaylandı", None,
+                     f"Satış #{sale_id}; {sale['tenant_id']}; {sale['amount']:.2f} TL")
+    await update.effective_message.reply_text(
+        f"✅ ÖDEME ONAYLANDI\nSatış: #{sale_id}\nMüşteri: {tenant['tenant_name']}\n"
+        f"Paket: {PLAN_CATALOG[sale['package_name']]['name']}\nTahsilat: {sale['amount']:,.2f} TL\n"
+        f"Lisans bitişi: {expires:%d.%m.%Y %H:%M}")
+
+
+async def list_sales_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    with connect() as c:
+        rows = c.execute("""SELECT s.sale_id,s.tenant_id,t.tenant_name,s.package_name,
+            s.duration_days,s.amount,s.status,s.created_at,s.paid_at
+            FROM tenant_sales s LEFT JOIN tenants t ON t.tenant_id=s.tenant_id
+            ORDER BY s.sale_id DESC LIMIT 30""").fetchall()
+    lines = ["🧾 MEDYAECAN — SON 30 SATIŞ"]
+    for row in rows:
+        state = "ÖDENDİ" if row["status"] == "paid" else "BEKLİYOR"
+        stamp = row["paid_at"] or row["created_at"]
+        lines.append(f"\n#{row['sale_id']} | {row['tenant_name'] or row['tenant_id']}\n"
+                     f"{row['package_name']} / {row['duration_days']} gün | {row['amount']:,.2f} TL | {state}\n"
+                     f"{datetime.fromisoformat(stamp):%d.%m.%Y}")
+    if not rows: lines.append("\nHenüz satış kaydı yok.")
+    await update.effective_message.reply_text("\n".join(lines)[:3900])
+
+
 async def assign_package_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
     if len(context.args) != 3:
@@ -3721,6 +3817,9 @@ def main():
     app.add_handler(CommandHandler("lisanslar", tenant_license_status))
     app.add_handler(CommandHandler("paketler", package_list_command))
     app.add_handler(CommandHandler("paketver", assign_package_command))
+    app.add_handler(CommandHandler("satisekle", create_sale_command))
+    app.add_handler(CommandHandler("odemeonay", confirm_sale_payment_command))
+    app.add_handler(CommandHandler("satislar", list_sales_command))
     app.add_handler(CommandHandler('musterisec', select_tenant_command))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
