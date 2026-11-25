@@ -659,6 +659,170 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             lines.append("Erişim kapsamındaki ödeme kaydı bulunmuyor.")
         await q.edit_message_text("\n".join(lines)[:3900], reply_markup=tenant_panel_keyboard())
 
+    elif q.data.startswith('tenantpanel:memberdetail:tenant:'):
+        parts = q.data.split(':')
+        try:
+            channel_value, member_id = int(parts[4]), int(parts[5])
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'members'):
+                raise PermissionError()
+            with connect() as c:
+                row = c.execute("""SELECT tm.username,tm.expires_at,tm.status,tc.channel_name
+                    FROM tenant_memberships tm JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+                    WHERE tm.tenant_id=? AND tm.channel_id=? AND tm.user_id=?""",
+                    (tid, channel_value, member_id)).fetchone()
+            if not row:
+                raise ValueError()
+        except PermissionError:
+            await q.answer('Bu kanal veya üye için yetkin yok.', show_alert=True)
+            return
+        except (ValueError, IndexError, TypeError):
+            await q.answer('Üye kaydı bulunamadı.', show_alert=True)
+            return
+        expiry = datetime.fromisoformat(row['expires_at'])
+        kb = [
+            [InlineKeyboardButton('➕ 30 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:30'),
+             InlineKeyboardButton('➕ 60 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:60')],
+            [InlineKeyboardButton('➕ 90 gün uzat', callback_data=f'tenantcust:extend:{channel_value}:{member_id}:90')],
+        ]
+        if manager_has_permission(uid, tid, channel_value, 'payments'):
+            kb.append([InlineKeyboardButton('💳 Ödeme kaydet', callback_data=f'tenantcust:pay:{channel_value}:{member_id}')])
+        kb += [[InlineKeyboardButton('🚫 VIP erişimini kaldır', callback_data=f'tenantcust:removeask:{channel_value}:{member_id}')],
+               [InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]]
+        await q.edit_message_text(
+            f'👤 ÜYE DETAYI\\n\\nAd: {row["username"] or "—"}\\nTelegram ID: {member_id}'
+            f'\\nKanal: {row["channel_name"]}\\nDurum: {row["status"]}'
+            f'\\nÜyelik bitişi: {expiry:%d.%m.%Y %H:%M}',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif q.data.startswith('tenantcust:extend:'):
+        parts = q.data.split(':')
+        try:
+            channel_value, member_id, days = int(parts[2]), int(parts[3]), int(parts[4])
+            if days not in (30, 60, 90) or (scope is not None and channel_value not in scope):
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'members'):
+                raise PermissionError()
+            with connect() as c:
+                row = c.execute("""SELECT expires_at,status FROM tenant_memberships
+                    WHERE tenant_id=? AND channel_id=? AND user_id=?""",
+                    (tid, channel_value, member_id)).fetchone()
+                if not row or row['status'] != 'active':
+                    raise ValueError()
+                until = max(datetime.fromisoformat(row['expires_at']), now()) + timedelta(days=days)
+                c.execute("""UPDATE tenant_memberships SET expires_at=?
+                    WHERE tenant_id=? AND channel_id=? AND user_id=? AND status='active'""",
+                    (until.isoformat(), tid, channel_value, member_id))
+            log_admin_action(uid, 'Müşteri panelinden üyelik uzatma', member_id,
+                             f'{days} gün; tenant={tid}; kanal={channel_value}')
+            try:
+                await context.bot.send_message(member_id, f'🎉 VIP üyeliğin {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}')
+            except Exception:
+                log.info('Üyelik uzatma bildirimi gönderilemedi: %s', member_id)
+            await q.edit_message_text(
+                f'✅ Üyelik {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('👤 Üye detayına dön',
+                    callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')],
+                    [InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]])
+            )
+        except PermissionError:
+            await q.answer('Bu işlem için kanal yetkin yok.', show_alert=True)
+        except (ValueError, IndexError, TypeError):
+            await q.answer('Üyelik uzatılamadı; kayıt aktif olmayabilir.', show_alert=True)
+
+    elif q.data.startswith('tenantcust:pay:'):
+        parts = q.data.split(':')
+        try:
+            channel_value, member_id = int(parts[2]), int(parts[3])
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'payments'):
+                raise PermissionError()
+            with connect() as c:
+                exists = c.execute("""SELECT 1 FROM tenant_memberships
+                    WHERE tenant_id=? AND channel_id=? AND user_id=?""",
+                    (tid, channel_value, member_id)).fetchone()
+            if not exists:
+                raise ValueError()
+            context.user_data['pending_payment'] = {
+                'kind':'tenant','tenant_id':tid,'channel_id':channel_value,
+                'user_id':member_id,'created_by':uid
+            }
+        except PermissionError:
+            await q.answer('Bu kanal için ödeme yetkin yok.', show_alert=True)
+            return
+        except (ValueError, IndexError, TypeError):
+            await q.answer('Üye kaydı bulunamadı.', show_alert=True)
+            return
+        await q.edit_message_text(
+            f'💳 ÖDEME KAYDI\\n\\nÜye ID: {member_id}\\nÖdeme tutarını TL olarak yaz.\\nÖrnek: 1500 Aylık VIP',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Vazgeç',
+                callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')]])
+        )
+
+    elif q.data.startswith('tenantcust:removeask:'):
+        parts = q.data.split(':')
+        try:
+            channel_value, member_id = int(parts[2]), int(parts[3])
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'members'):
+                raise PermissionError()
+            with connect() as c:
+                exists = c.execute("""SELECT 1 FROM tenant_memberships
+                    WHERE tenant_id=? AND channel_id=? AND user_id=? AND status='active'""",
+                    (tid, channel_value, member_id)).fetchone()
+            if not exists:
+                raise ValueError()
+        except PermissionError:
+            await q.answer('Bu kanal için üye yönetme yetkin yok.', show_alert=True)
+            return
+        except (ValueError, IndexError, TypeError):
+            await q.answer('Aktif üyelik bulunamadı.', show_alert=True)
+            return
+        await q.edit_message_text(
+            f'⚠️ {member_id} numaralı üyenin VIP erişimi bu kanaldan kaldırılacak. Onaylıyor musun?',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('Evet, erişimi kaldır', callback_data=f'tenantcust:remove:{channel_value}:{member_id}')],
+                [InlineKeyboardButton('Vazgeç', callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')]])
+        )
+
+    elif q.data.startswith('tenantcust:remove:'):
+        parts = q.data.split(':')
+        try:
+            channel_value, member_id = int(parts[2]), int(parts[3])
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'members'):
+                raise PermissionError()
+            with connect() as c:
+                row = c.execute("""SELECT status FROM tenant_memberships
+                    WHERE tenant_id=? AND channel_id=? AND user_id=?""",
+                    (tid, channel_value, member_id)).fetchone()
+                if not row or row['status'] != 'active':
+                    raise ValueError()
+                c.execute("""UPDATE tenant_memberships SET status='revoked'
+                    WHERE tenant_id=? AND channel_id=? AND user_id=? AND status='active'""",
+                    (tid, channel_value, member_id))
+            try:
+                await context.bot.ban_chat_member(chat_id=channel_value, user_id=member_id)
+            except Exception:
+                log.exception('VIP kanaldan çıkarma başarısız: channel=%s user=%s', channel_value, member_id)
+            log_admin_action(uid, 'Müşteri panelinden VIP erişimi kaldırıldı', member_id,
+                             f'tenant={tid}; kanal={channel_value}')
+            try:
+                await context.bot.send_message(member_id, 'VIP üyeliğin ilgili kanaldan kaldırıldı.')
+            except Exception:
+                pass
+            await q.edit_message_text('✅ VIP üyeliği iptal edildi ve erişim kaydı kapatıldı.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]]))
+        except PermissionError:
+            await q.answer('Bu kanal için yetkin yok.', show_alert=True)
+        except (ValueError, IndexError, TypeError):
+            await q.answer('Üyelik iptal edilemedi; kayıt aktif olmayabilir.', show_alert=True)
+
     else:
         await q.answer('Bu bölüm müşteri panelinde kullanılamıyor.', show_alert=True)
 
