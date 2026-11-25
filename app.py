@@ -453,13 +453,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         input_field_placeholder="Menüyü açmak için butona dokun"
     )
     if admin(user.id):
-        msg = f"🛡 GOLDEN VIP — ANA YÖNETİCİ\\n\\nHoş geldin {user.first_name}!\\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
+        msg = f"🛡 GOLDEN VIP — ANA YÖNETİCİ\n\nHoş geldin {user.first_name}!\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
         rows = [[InlineKeyboardButton("🛠 Ana Yönetim Panelini Aç", callback_data="home:admin")]]
     elif tenant_permissions(user.id):
         permissions = tenant_permissions(user.id)
         customer_names = list(dict.fromkeys(str(r["tenant_name"]) for r in permissions))
-        msg = (f"🏢 MÜŞTERİ YÖNETİM ALANI\\n\\nHoş geldin {user.first_name}!\\n"
-               f"Müşteri: {', '.join(customer_names)}\\n\\nYalnızca yetkili olduğun müşteri ve kanalları yönetebilirsin.")
+        msg = (f"🏢 MÜŞTERİ YÖNETİM ALANI\n\nHoş geldin {user.first_name}!\n"
+               f"Müşteri: {', '.join(customer_names)}\n\nYalnızca yetkili olduğun müşteri ve kanalları yönetebilirsin.")
         rows = [[InlineKeyboardButton("🏢 Müşteri Panelimi Aç", callback_data="home:admin")]]
     else:
         exp = active_expiry(user.id)
@@ -471,12 +471,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 candidate = datetime.fromisoformat(tenant_exp["expires_at"])
                 exp = candidate if candidate > now() else None
         if exp:
-            msg = (f"💎 GOLDEN VIP ÜYE ALANI\\n\\nHoş geldin {user.first_name}!\\n"
-                   f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}\\n\\nÜyelik bilgilerini ve desteği buradan takip edebilirsin.")
+            msg = (f"💎 GOLDEN VIP ÜYE ALANI\n\nHoş geldin {user.first_name}!\n"
+                   f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}\n\nÜyelik bilgilerini ve desteği buradan takip edebilirsin.")
             rows = [[InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
                      InlineKeyboardButton("🆘 Destek", callback_data="support")]]
         else:
-            msg = (f"👑 GOLDEN VIP'a hoş geldin, {user.first_name}!\\n\\n"
+            msg = (f"👑 GOLDEN VIP'a hoş geldin, {user.first_name}!\n\n"
                    "VIP üyeliğine başvurmak veya destek almak için aşağıdaki menüyü kullanabilirsin.")
             rows = [[InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
                     [InlineKeyboardButton("🆘 Destek", callback_data="support")]]
