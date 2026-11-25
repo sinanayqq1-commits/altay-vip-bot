@@ -734,7 +734,9 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 if not tr: raise ValueError()
                 tenant_key = tr["tenant_id"]
             else: raise ValueError()
-            context.user_data["pending_payment"] = {"kind":kind,"tenant_id":tenant_key,"channel_id":channel_value,"user_id":member_id}
+            if not manager_has_permission(uid, tenant_key, channel_value, "payments"):
+                await q.answer("Bu kanal için ödeme yetkin bulunmuyor.", show_alert=True); return
+            context.user_data["pending_payment"] = {"kind":kind,"tenant_id":tenant_key,"channel_id":channel_value,"user_id":member_id,"created_by":uid}
         except (ValueError, IndexError, TypeError):
             await q.answer("Üye bilgisi geçersiz.", show_alert=True); return
         await q.edit_message_text(
@@ -1926,7 +1928,12 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending = context.user_data.get("pending_payment")
-    if not pending or not admin_only(update):
+    if not pending:
+        return
+    actor_id = update.effective_user.id
+    if pending.get("created_by") != actor_id or not manager_has_permission(actor_id, pending["tenant_id"], pending["channel_id"], "payments"):
+        context.user_data.pop("pending_payment", None)
+        await update.effective_message.reply_text("Bu ödeme kaydını oluşturma yetkin yok; işlem iptal edildi.")
         return
     raw = (update.effective_message.text or "").strip()
     bits = raw.split(maxsplit=1)
@@ -2099,6 +2106,32 @@ async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_admin_action(uid, "Toplu duyuru", None, f"Başarılı: {ok}; başarısız: {failed}")
     await update.message.reply_text(f'Toplu paylaşım tamamlandı. Başarılı: {ok} | Başarısız: {failed}')
 
+async def record_payment_as_manager(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.effective_message: return
+    if len(context.args) < 3:
+        await update.effective_message.reply_text("Kullanım: /odeme KANAL_ID UYE_ID TUTAR [AÇIKLAMA]")
+        return
+    try:
+        cid=int(context.args[0]); member_id=int(context.args[1]); amount=float(context.args[2].replace(",", "."))
+        if member_id<=0 or amount<=0 or amount>100000000: raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Kanal ID, üye ID veya tutar geçersiz."); return
+    with connect() as conn:
+        channel=conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=? AND status='active'",(cid,)).fetchone()
+    if not channel:
+        await update.effective_message.reply_text("Bu kanal kayıtlı veya aktif değil."); return
+    tid=channel["tenant_id"]
+    if not manager_has_permission(update.effective_user.id,tid,cid,"payments"):
+        await update.effective_message.reply_text("Bu kanal için ödeme kaydetme yetkin yok."); return
+    note=" ".join(context.args[3:])[:200]
+    with connect() as conn:
+        conn.execute("""INSERT INTO membership_payments
+            (membership_type,tenant_id,channel_id,user_id,amount,note,paid_at,recorded_by)
+            VALUES('tenant',?,?,?,?,?,?,?)""",
+            (tid,cid,member_id,amount,note,now().isoformat(),update.effective_user.id))
+    log_admin_action(update.effective_user.id,"Ödeme kaydı",member_id,f"{amount:.2f} TL; {note}; kanal={cid}")
+    await update.effective_message.reply_text(f"✅ Ödeme kaydedildi. Üye: {member_id} | Tutar: {amount:,.2f} TL")
+
 async def grant_manager_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
     if len(context.args) not in (2,3):
@@ -2252,6 +2285,7 @@ def main():
     app.add_handler(CommandHandler("planla", plan))
     app.add_handler(CommandHandler("planlar", plans))
     app.add_handler(CommandHandler("iptal", cancel))
+    app.add_handler(CommandHandler("odeme", record_payment_as_manager))
     app.add_handler(CommandHandler("yetkiver", grant_manager_role))
     app.add_handler(CommandHandler("yetkikaldir", revoke_manager_role))
     app.add_handler(CommandHandler("yetkililer", list_manager_roles))
