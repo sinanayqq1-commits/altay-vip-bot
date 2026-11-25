@@ -63,6 +63,11 @@ def init_db():
             user_id INTEGER NOT NULL, chat_id INTEGER NOT NULL,
             message_id INTEGER NOT NULL, invite_link TEXT NOT NULL,
             PRIMARY KEY(user_id,chat_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS membership_reminders(
+            membership_type TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT '',
+            channel_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL,
+            reminder_days INTEGER NOT NULL, sent_at TEXT NOT NULL,
+            PRIMARY KEY(membership_type,tenant_id,channel_id,user_id,reminder_days))""")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
@@ -1071,6 +1076,51 @@ async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
         log.exception("GOLDEN VIP grup tanıtımı gönderilemedi: %s", group_id)
 
 
+async def send_membership_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Send each 3-day and 1-day expiry reminder once; preserve all membership rows."""
+    current = now()
+    reminders = ((3, timedelta(days=3)), (1, timedelta(days=1)))
+    with connect() as c:
+        legacy_rows = c.execute("""SELECT user_id,expires_at FROM memberships
+            WHERE status='active' AND expires_at>? AND expires_at<=?""",
+            (current.isoformat(), (current + timedelta(days=3, hours=6)).isoformat())).fetchall()
+        tenant_rows = c.execute("""SELECT tenant_id,channel_id,user_id,expires_at FROM tenant_memberships
+            WHERE status='active' AND expires_at>? AND expires_at<=?""",
+            (current.isoformat(), (current + timedelta(days=3, hours=6)).isoformat())).fetchall()
+    for kind, rows in (("legacy", legacy_rows), ("tenant", tenant_rows)):
+        for row in rows:
+            expiry = datetime.fromisoformat(row["expires_at"])
+            days_left = max(1, (expiry.date() - current.date()).days)
+            reminder_day = next((d for d, _ in reminders if days_left == d), None)
+            if reminder_day is None:
+                continue
+            tenant_id = row["tenant_id"] if kind == "tenant" else ""
+            chat_id = int(row["channel_id"]) if kind == "tenant" else int(channel_id())
+            uid = int(row["user_id"])
+            with connect() as c:
+                already = c.execute("""SELECT 1 FROM membership_reminders
+                    WHERE membership_type=? AND tenant_id=? AND channel_id=? AND user_id=? AND reminder_days=?""",
+                    (kind, tenant_id, chat_id, uid, reminder_day)).fetchone()
+            if already:
+                continue
+            label = "3 gün" if reminder_day == 3 else "1 gün"
+            try:
+                await context.bot.send_message(
+                    uid,
+                    f"⏳ VIP üyeliğinin bitmesine {label} kaldı.\\n"
+                    f"Bitiş tarihi: {expiry:%d.%m.%Y %H:%M}\\n"
+                    "Üyeliğini yenilemek için yöneticinle iletişime geç."
+                )
+            except Exception:
+                log.info("VIP bitiş hatırlatması gönderilemedi: user=%s", uid)
+                continue
+            with connect() as c:
+                c.execute("""INSERT OR IGNORE INTO membership_reminders
+                    (membership_type,tenant_id,channel_id,user_id,reminder_days,sent_at)
+                    VALUES(?,?,?,?,?,?)""",
+                    (kind, tenant_id, chat_id, uid, reminder_day, current.isoformat()))
+
+
 async def post_init(app):
     with connect() as c:
         rows = c.execute(
@@ -1084,6 +1134,7 @@ async def post_init(app):
         )
     app.job_queue.run_repeating(expire, interval=300, first=20, name="vip-expiry")
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
+    app.job_queue.run_repeating(send_membership_reminders, interval=21600, first=60, name="membership-reminders")
     app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=0, name="golden-group-promo")
 
 
