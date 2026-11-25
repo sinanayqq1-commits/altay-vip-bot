@@ -2184,10 +2184,9 @@ async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2].startswith(('https://','http://')):
         await update.message.reply_text('Kullanım: /linkekle kategori | Ad | https://adres')
         return
-    tenant_id = 'altay_demo' if not admin(uid) else 'altay_demo'
-    if not manager_can_access(uid, tenant_id):
-        await update.message.reply_text('Bu müşteri için yetkin yok.')
-        return
+    tenant_id = current_tenant_id(uid, context)
+    if not tenant_id or not manager_has_permission(uid, tenant_id, None, 'settings'):
+        await update.message.reply_text('Bu müşteri için SITE ayarı yetkin yok.'); return
     with connect() as c:
         c.execute('INSERT INTO link_items(tenant_id,category,display_name,url,enabled) VALUES(?,?,?,?,1)',
                   (tenant_id, parts[0], parts[1], parts[2]))
@@ -2203,10 +2202,9 @@ async def add_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) != 2 or not parts[0] or not parts[1].startswith(('https://t.me/','http://t.me/')):
         await update.message.reply_text('Kullanım: /destekekle Ad Soyad | https://t.me/kullanici')
         return
-    tenant_id = 'altay_demo'
-    if not manager_can_access(uid, tenant_id):
-        await update.message.reply_text('Bu müşteri için yetkin yok.')
-        return
+    tenant_id = current_tenant_id(uid, context)
+    if not tenant_id or not manager_has_permission(uid, tenant_id, None, 'settings'):
+        await update.message.reply_text('Bu müşteri için destek ayarı yetkin yok.'); return
     with connect() as c:
         c.execute('INSERT INTO support_contacts(tenant_id,display_name,telegram_link,enabled) VALUES(?,?,?,1)',
                   (tenant_id, parts[0], parts[1]))
@@ -2214,11 +2212,8 @@ async def add_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    tenant_id = 'legacy_single'
-    with connect() as conn:
-        active_tenant = conn.execute("SELECT 1 FROM tenants WHERE tenant_id=? AND status='active'", (tenant_id,)).fetchone()
-    if not active_tenant: tenant_id = 'altay_demo'
-    if not manager_can_access(uid, tenant_id):
+    tenant_id = current_tenant_id(uid, context)
+    if not tenant_id or not manager_can_access(uid, tenant_id):
         await update.message.reply_text('Bu müşteri için yetkin yok.')
         return
     if not manager_has_permission(uid, tenant_id, None, "broadcast"):
