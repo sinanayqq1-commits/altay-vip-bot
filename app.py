@@ -354,9 +354,10 @@ async def approve(context, uid, days=30):
         (uid, until.isoformat(), username))
         c.execute("UPDATE applications SET status='approved' WHERE user_id=?", (uid,))
     link = ""
+    inv = None
     try:
         inv = await context.bot.create_chat_invite_link(
-            chat_id=channel_id(), name=f"GOLDEN-VIP-{uid}", member_limit=1
+            chat_id=channel_id(), name=f"GOLDEN-VIP-{uid}"
         )
         link = "\n\nVIP kanala doğrudan katılım bağlantın:\n" + inv.invite_link
     except Exception:
@@ -1185,8 +1186,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         try:
             invite = await context.bot.create_chat_invite_link(
                 chat_id=vip_channel_id,
-                name=f"GOLDEN-VIP-{user_id}",
-                member_limit=1
+                name=f"GOLDEN-VIP-{user_id}"
             )
         except Exception:
             log.exception("VIP davet bağlantısı oluşturulamadı")
