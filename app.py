@@ -1,4 +1,4 @@
-import os, logging, sqlite3
+import os, logging, sqlite3, secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -125,6 +125,13 @@ def init_db():
             role TEXT NOT NULL, channel_id INTEGER,
             status TEXT NOT NULL DEFAULT 'active', added_at TEXT NOT NULL,
             PRIMARY KEY(tenant_id,user_id,role,channel_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS team_invites(
+            invite_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL,
+            channel_id INTEGER NOT NULL, invited_by INTEGER NOT NULL,
+            invited_user_id INTEGER, invited_username TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL, expires_at TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_memberships(
             tenant_id TEXT NOT NULL, channel_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL, expires_at TEXT NOT NULL,
@@ -345,6 +352,50 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=kb
             )
         return
+    # Ekip daveti: kişi bağlantıyı açıp botu başlattığında Telegram kimliği alınır.
+    if chat and chat.type == "private" and context.args and context.args[0].startswith("team_"):
+        token = context.args[0][5:]
+        with connect() as c:
+            invite = c.execute("""SELECT invite_id,tenant_id,channel_id,invited_by,status,expires_at
+                FROM team_invites WHERE token=?""", (token,)).fetchone()
+            if invite and invite["status"] == "pending" and datetime.fromisoformat(invite["expires_at"]) > now():
+                if int(invite["invited_by"]) == int(user.id):
+                    await update.effective_message.reply_text("Bu davet bağlantısını kendin kullanamazsın.")
+                    return
+                c.execute("""UPDATE team_invites SET invited_user_id=?,invited_username=?,status='awaiting_role'
+                    WHERE invite_id=? AND status='pending'""",
+                    (user.id, user.username or "", invite["invite_id"]))
+            else:
+                invite = None
+        if not invite:
+            await update.effective_message.reply_text("Bu ekip daveti geçersiz, süresi dolmuş veya daha önce kullanılmış.")
+            return
+        inviter = int(invite["invited_by"])
+        if not manager_can_access(inviter, invite["tenant_id"], int(invite["channel_id"])) or not manager_has_permission(inviter, invite["tenant_id"], int(invite["channel_id"]), "settings"):
+            with connect() as c:
+                c.execute("UPDATE team_invites SET status='cancelled' WHERE invite_id=?", (invite["invite_id"],))
+            await update.effective_message.reply_text("Bu daveti gönderen kişinin ekip yönetim yetkisi artık aktif değil.")
+            return
+        display = f"@{user.username}" if user.username else user.full_name
+        role_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛡 Moderatör", callback_data=f"teamrole:{invite['invite_id']}:moderator"),
+             InlineKeyboardButton("💳 Finans", callback_data=f"teamrole:{invite['invite_id']}:finance")],
+            [InlineKeyboardButton("📣 Yayıncı", callback_data=f"teamrole:{invite['invite_id']}:publisher")],
+            [InlineKeyboardButton("👔 Yönetici", callback_data=f"teamrole:{invite['invite_id']}:manager")]
+        ])
+        try:
+            await context.bot.send_message(
+                inviter,
+                f"👤 EKİP DAVETİ KABUL EDİLDİ\n\nKullanıcı: {display}\nKanal: {invite['channel_id']}\n\nBu kişiye verilecek görevi seç:",
+                reply_markup=role_kb
+            )
+        except Exception:
+            log.exception("Ekip daveti gönderene bildirilemedi: %s", inviter)
+            await update.effective_message.reply_text("Davet alındı ancak müşteriye bildirim gönderilemedi.")
+            return
+        await update.effective_message.reply_text("✅ Davetin alındı. Müşteri görevini seçtikten sonra ekip yetkin aktif olacak.")
+        return
+
     # Kanal VIP butonundan gelen derin bağlantı: başvuru özel sohbette alınır,
     # böylece Telegram kullanıcı kimliği güvenilir biçimde elde edilir.
     if context.args and (context.args[0].startswith("vipc_") or context.args[0].startswith("vip_")):
@@ -601,13 +652,51 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         if not manager_has_permission(uid, tid, None, 'settings'):
             await q.answer('Ekip yönetimi yetkin yok.', show_alert=True)
             return
-        context.user_data['pending_team_grant'] = {'tenant_id':tid,'created_by':uid,'scope':scope}
-        await q.edit_message_text(
-            '➕ EKİP ÜYESİ EKLE\n\nTelegram kullanıcı ID, rol ve kanal ID bilgilerini tek satırda gönder.\n'
-            'Örnek: 123456789 moderator -1001234567890\n\n'
-            'Roller: moderator, finance, publisher. Manager yetkisini yalnızca müşteri sahibi verebilir.',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Vazgeç', callback_data='tenantpanel:team')]])
-        )
+        where, params = scoped_channel_filter(scope, "channel_id")
+        with connect() as c:
+            channels = c.execute("SELECT channel_id,channel_name FROM tenant_channels WHERE tenant_id=? AND status='active'" + where + " ORDER BY channel_name",
+                (tid,) + params).fetchall()
+        if not channels:
+            await q.answer('Erişebildiğin aktif kanal bulunamadı.', show_alert=True)
+            return
+        buttons = [[InlineKeyboardButton(f"📡 {ch['channel_name']}", callback_data=f"tenantpanel:teaminvitechannel:{ch['channel_id']}")] for ch in channels]
+        buttons.append([InlineKeyboardButton('⬅️ Ekip yönetimine dön', callback_data='tenantpanel:team')])
+        await q.edit_message_text('➕ EKİP ÜYESİ EKLE\n\nHangi kanal için ekip daveti oluşturulsun?', reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith('tenantpanel:teaminvitechannel:'):
+        try:
+            channel_value = int(q.data.rsplit(':', 1)[1])
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_can_access(uid, tid, channel_value) or not manager_has_permission(uid, tid, channel_value, 'settings'):
+                raise PermissionError()
+            with connect() as c:
+                channel = c.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tid, channel_value)).fetchone()
+                if not channel:
+                    raise ValueError()
+                token = secrets.token_urlsafe(12)
+                created = now()
+                cur = c.execute("""INSERT INTO team_invites
+                    (token,tenant_id,channel_id,invited_by,status,created_at,expires_at)
+                    VALUES(?,?,?,?,'pending',?,?)""",
+                    (token, tid, channel_value, uid, created.isoformat(), (created + timedelta(hours=24)).isoformat()))
+                invite_id = cur.lastrowid
+            bot_username = (await context.bot.get_me()).username
+            if not bot_username:
+                raise ValueError("Bot kullanıcı adı bulunamadı.")
+            invite_url = f"https://t.me/{bot_username}?start=team_{token}"
+            await q.edit_message_text(
+                f"🔗 EKİP DAVETİ HAZIR\n\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nBu bağlantıyı eklemek istediğin kişiye gönder. Kişi bağlantıyı açıp botu başlattığında Telegram hesabı otomatik tanınacak. Ardından görevini sen seçeceksin.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('📨 Davet bağlantısını gönder', url=invite_url)],
+                    [InlineKeyboardButton('🛡 Ekip yönetimine dön', callback_data='tenantpanel:team')]
+                ])
+            )
+            log_admin_action(uid, 'Ekip davet bağlantısı oluşturuldu', None, f'tenant={tid}; kanal={channel_value}; davet={invite_id}')
+        except PermissionError:
+            await q.answer('Bu kanal için ekip daveti oluşturma yetkin yok.', show_alert=True)
+        except (ValueError, TypeError):
+            await q.answer('Kanal veya bot bağlantısı oluşturulamadı.', show_alert=True)
 
     elif q.data.startswith('tenantpanel:teamrevokeask:'):
         try:
@@ -920,6 +1009,59 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     else:
         await q.answer('Bu bölüm müşteri panelinde kullanılamıyor.', show_alert=True)
+
+
+async def team_role_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    actor_id = q.from_user.id
+    try:
+        _, invite_id_text, role = q.data.split(':')
+        invite_id = int(invite_id_text)
+        if role not in ('manager', 'moderator', 'finance', 'publisher'):
+            raise ValueError()
+    except (ValueError, TypeError):
+        await q.answer('Davet bilgisi geçersiz.', show_alert=True)
+        return
+    with connect() as c:
+        invite = c.execute("""SELECT tenant_id,channel_id,invited_by,invited_user_id,invited_username,status,expires_at
+            FROM team_invites WHERE invite_id=?""", (invite_id,)).fetchone()
+        if not invite or int(invite['invited_by']) != actor_id or invite['status'] != 'awaiting_role':
+            await q.answer('Bu davet artık kullanılamıyor.', show_alert=True)
+            return
+        if datetime.fromisoformat(invite['expires_at']) <= now():
+            c.execute("UPDATE team_invites SET status='expired' WHERE invite_id=?", (invite_id,))
+            await q.answer('Davetin süresi dolmuş.', show_alert=True)
+            return
+        tenant_id, channel_value = invite['tenant_id'], int(invite['channel_id'])
+        target = int(invite['invited_user_id'])
+        if target == actor_id or target in ADMIN_IDS:
+            await q.answer('Bu kullanıcıya bu şekilde yetki verilemez.', show_alert=True)
+            return
+        if not manager_can_access(actor_id, tenant_id, channel_value) or not manager_has_permission(actor_id, tenant_id, channel_value, 'settings'):
+            await q.answer('Ekip yönetim yetkin artık aktif değil.', show_alert=True)
+            return
+        actor_roles = c.execute("""SELECT role,channel_id FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND status='active'""", (tenant_id, actor_id)).fetchall()
+        is_owner = any(r['role'] == 'owner' and (r['channel_id'] is None or int(r['channel_id']) == channel_value) for r in actor_roles)
+        if role == 'manager' and not is_owner:
+            await q.answer('Yönetici yetkisini yalnızca müşteri sahibi verebilir.', show_alert=True)
+            return
+        c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+            VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
+            DO UPDATE SET status='active'""", (tenant_id, target, role, channel_value, now().isoformat()))
+        c.execute("UPDATE team_invites SET status='completed' WHERE invite_id=?", (invite_id,))
+        channel = c.execute("SELECT channel_name FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
+    log_admin_action(actor_id, 'Müşteri panelinden davetle ekip yetkisi verildi', target,
+                     f'rol={role}; tenant={tenant_id}; kanal={channel_value}')
+    label = f"@{invite['invited_username']}" if invite['invited_username'] else str(target)
+    await q.edit_message_text(
+        f"✅ EKİP ÜYESİ EKLENDİ\n\nKullanıcı: {label}\nGörev: {role}\nKanal: {channel['channel_name'] if channel else channel_value}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🛡 Ekip yönetimine dön', callback_data='tenantpanel:team')]])
+    )
+    try:
+        await context.bot.send_message(target, f"🎉 {channel['channel_name'] if channel else 'Kanal'} için ekip yetkin tanımlandı. Görevin: {role}. Paneli açmak için /admin yaz.")
+    except Exception:
+        log.info('Yeni ekip üyesine bildirim gönderilemedi: %s', target)
 
 
 async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3204,6 +3346,7 @@ def main():
     app.add_handler(CommandHandler("otomatikduyurusil", recurring_announcement_delete))
     app.add_handler(CommandHandler("karsilama", set_welcome_message))
     app.add_handler(CommandHandler("uyegecmis", user_history_command))
+    app.add_handler(CallbackQueryHandler(team_role_callback, pattern=r"^teamrole:"))
     app.add_handler(CallbackQueryHandler(tenant_panel_callbacks, pattern=r"^tenantpanel:"))
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r"^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(buttons, pattern=r"^(apply|status|support)$"))
