@@ -476,7 +476,12 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         return
     await q.answer()
 
-    if q.data == "tenantpanel:channels":
+    if q.data == "tenantpanel:home":
+        await q.edit_message_text(
+            "🛠 GOLDEN VIP — YÖNETİM PANELİ\\n\\nİşlem yapmak için aşağıdan bir bölüm seç.",
+            reply_markup=admin_panel_keyboard()
+        )
+    elif q.data == "tenantpanel:channels":
         if admin(uid):
             with connect() as c:
                 # Paneli açan ana yöneticinin Telegram kullanıcı adını kanala bağla.
@@ -586,11 +591,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             remaining = (expiry.date() - now().date()).days
             username = f"@{row['username']}" if row["username"] else "Kayıtlı değil"
             detail_text = (
-                "👤 VIP ÜYE DETAYI\\n\\n"
-                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\\n"
-                f"Kullanıcı adı: {username}\\nTelegram ID: {row['user_id']}\\n"
-                f"Üyelik: GOLDEN VIP (ana kanal)\\nDurum: {row['status']}\\n"
-                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\\nKalan süre: {max(0, remaining)} gün"
+                "👤 VIP ÜYE DETAYI\n\n"
+                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\n"
+                f"Kullanıcı adı: {username}\nTelegram ID: {row['user_id']}\n"
+                f"Üyelik: GOLDEN VIP (ana kanal)\nDurum: {row['status']}\n"
+                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\nKalan süre: {max(0, remaining)} gün"
             )
         elif len(parts) == 5 and parts[2] == "tenant":
             channel_value = int(parts[3])
@@ -615,17 +620,17 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             remaining = (expiry.date() - now().date()).days
             username = f"@{row['username']}" if row["username"] else "Kayıtlı değil"
             detail_text = (
-                "👤 VIP ÜYE DETAYI\\n\\n"
-                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\\n"
-                f"Kullanıcı adı: {username}\\nTelegram ID: {row['user_id']}\\n"
-                f"Müşteri: {row['tenant_name'] or 'Kayıtlı değil'}\\n"
-                f"Kanal: {row['channel_name'] or 'Kayıtlı değil'}\\nDurum: {row['status']}\\n"
-                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\\nKalan süre: {max(0, remaining)} gün"
+                "👤 VIP ÜYE DETAYI\n\n"
+                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\n"
+                f"Kullanıcı adı: {username}\nTelegram ID: {row['user_id']}\n"
+                f"Müşteri: {row['tenant_name'] or 'Kayıtlı değil'}\n"
+                f"Kanal: {row['channel_name'] or 'Kayıtlı değil'}\nDurum: {row['status']}\n"
+                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\nKalan süre: {max(0, remaining)} gün"
             )
         else:
             await q.answer("Geçersiz üye kaydı.", show_alert=True)
             return
-        detail_text += "\\n\\nNot: Üyelik başlangıç tarihi mevcut veritabanında tutulmuyor."
+        detail_text += "\n\nNot: Üyelik başlangıç tarihi mevcut veritabanında tutulmuyor."
         await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
             [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
