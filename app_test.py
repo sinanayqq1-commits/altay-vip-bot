@@ -1142,14 +1142,17 @@ async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f'Toplu paylaşım tamamlandı. Başarılı: {ok} | Başarısız: {failed}')
 
 async def list_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tenant_id = 'altay_demo'
-    with connect() as c:
-        rows = c.execute('SELECT display_name,telegram_link FROM support_contacts WHERE tenant_id=? AND enabled=1 ORDER BY contact_id', (tenant_id,)).fetchall()
-    if not rows:
-        await update.callback_query.message.reply_text('Henüz destek yetkilisi tanımlanmamış.')
+    # Destek butonu doğrudan botun yapılandırılmış ana yöneticisinin Telegram profiline gider.
+    if not ADMIN_IDS:
+        await update.callback_query.message.reply_text('Destek bağlantısı şu anda ayarlanmamış.')
         return
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(r['display_name'], url=r['telegram_link'])] for r in rows])
-    await update.callback_query.message.reply_text('🆘 Destek yetkilileri:', reply_markup=kb)
+    support_admin_id = sorted(ADMIN_IDS)[0]
+    support_url = f'tg://user?id={support_admin_id}'
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton('💬 Yöneticiye mesaj gönder', url=support_url)]])
+    await update.callback_query.message.reply_text(
+        '🆘 Destek için aşağıdaki butona basarak doğrudan yöneticiye ulaşabilirsin.',
+        reply_markup=kb
+    )
 
 
 def main():
