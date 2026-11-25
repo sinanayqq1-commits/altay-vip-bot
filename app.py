@@ -59,6 +59,10 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS posts(
             job_id TEXT PRIMARY KEY, run_at TEXT NOT NULL, message TEXT NOT NULL,
             status TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS vip_invite_messages(
+            user_id INTEGER NOT NULL, chat_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL, invite_link TEXT NOT NULL,
+            PRIMARY KEY(user_id,chat_id))""")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
@@ -178,6 +182,25 @@ def init_db():
                 c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
+
+
+async def cleanup_vip_invite_message(context, user_id, chat_id):
+    """Remove the private invite message and revoke its link after joining."""
+    with connect() as c:
+        row = c.execute("""SELECT message_id,invite_link FROM vip_invite_messages
+            WHERE user_id=? AND chat_id=?""", (user_id, chat_id)).fetchone()
+    if not row:
+        return
+    try:
+        await context.bot.delete_message(chat_id=user_id, message_id=int(row["message_id"]))
+    except Exception:
+        log.info("VIP davet mesajı silinemedi: user=%s chat=%s", user_id, chat_id)
+    try:
+        await context.bot.revoke_chat_invite_link(chat_id=chat_id, invite_link=row["invite_link"])
+    except Exception:
+        log.info("VIP davet bağlantısı iptal edilemedi: chat=%s", chat_id)
+    with connect() as c:
+        c.execute("DELETE FROM vip_invite_messages WHERE user_id=? AND chat_id=?", (user_id, chat_id))
 
 
 def admin(uid):
@@ -333,17 +356,22 @@ async def approve(context, uid, days=30):
     link = ""
     try:
         inv = await context.bot.create_chat_invite_link(
-            chat_id=channel_id(), creates_join_request=True, name=f"GOLDEN-VIP-{uid}"
+            chat_id=channel_id(), name=f"GOLDEN-VIP-{uid}", member_limit=1
         )
-        link = "\n\nVIP kanala özel katılım bağlantın (süresiz; giriş yönetici onayına tabidir):\n" + inv.invite_link
+        link = "\n\nVIP kanala doğrudan katılım bağlantın:\n" + inv.invite_link
     except Exception:
         log.exception("Davet bağlantısı oluşturulamadı")
         link = "\n\nDavet bağlantısı oluşturulamadı. Yöneticiyle iletişime geç."
     try:
-        await context.bot.send_message(
+        sent = await context.bot.send_message(
             uid, f"🎉 VIP üyeliğin onaylandı!\nSüre: {days} gün\n"
                  f"Bitiş: {until:%d.%m.%Y %H:%M}{link}"
         )
+        if inv:
+            with connect() as c:
+                c.execute("""INSERT OR REPLACE INTO vip_invite_messages
+                    (user_id,chat_id,message_id,invite_link) VALUES(?,?,?,?)""",
+                    (uid, int(channel_id()), sent.message_id, inv.invite_link))
     except Exception:
         log.exception("Kullanıcıya mesaj gönderilemedi")
 
@@ -967,6 +995,7 @@ async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_T
                 WHERE user_id=? AND status='active' AND expires_at>? LIMIT 1""",
                 (user_id, current)).fetchone()
     if tenant_ok or legacy_ok:
+        await cleanup_vip_invite_message(context, user_id, int(chat_id))
         return
     try:
         await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
@@ -1156,8 +1185,8 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         try:
             invite = await context.bot.create_chat_invite_link(
                 chat_id=vip_channel_id,
-                creates_join_request=True,
-                name=f"GOLDEN-VIP-{user_id}"
+                name=f"GOLDEN-VIP-{user_id}",
+                member_limit=1
             )
         except Exception:
             log.exception("VIP davet bağlantısı oluşturulamadı")
@@ -1172,11 +1201,15 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
                 username=COALESCE(NULLIF(excluded.username,''),tenant_memberships.username)""",
                 (tenant_id, vip_channel_id, user_id, expires.isoformat(), application["username"] or ""))
         try:
-            await context.bot.send_message(
+            sent = await context.bot.send_message(
                 user_id,
                 f"🎉 VIP başvurun onaylandı!\nÜyelik süren: 30 gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
-                f"VIP kanalına özel katılım bağlantın (süresiz; giriş üyelik kontrolünden sonra onaylanır):\n{invite.invite_link}"
+                f"VIP kanalına doğrudan katılım bağlantın:\n{invite.invite_link}"
             )
+            with connect() as c:
+                c.execute("""INSERT OR REPLACE INTO vip_invite_messages
+                    (user_id,chat_id,message_id,invite_link) VALUES(?,?,?,?)""",
+                    (user_id, vip_channel_id, sent.message_id, invite.invite_link))
         except Exception:
             log.exception("Onaylanan kullanıcıya VIP daveti gönderilemedi: %s", user_id)
             await q.answer("Onaylandı ancak kullanıcı botu başlatmadığı için özel mesaj gönderilemedi.", show_alert=True)
