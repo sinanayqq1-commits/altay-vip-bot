@@ -1837,10 +1837,15 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
 def manager_has_permission(uid, tenant_id, cid, permission):
     if admin(uid): return True
     with connect() as conn:
-        rows = conn.execute("""SELECT role FROM tenant_admins
-            WHERE tenant_id=? AND user_id=? AND status='active'
-              AND (channel_id=? OR channel_id IS NULL)""",
-            (tenant_id, uid, cid)).fetchall()
+        if cid is None:
+            rows = conn.execute("""SELECT role FROM tenant_admins
+                WHERE tenant_id=? AND user_id=? AND status='active'""",
+                (tenant_id, uid)).fetchall()
+        else:
+            rows = conn.execute("""SELECT role FROM tenant_admins
+                WHERE tenant_id=? AND user_id=? AND status='active'
+                  AND (channel_id=? OR channel_id IS NULL)""",
+                (tenant_id, uid, cid)).fetchall()
     role_permissions = {
         "owner": {"members","applications","payments","broadcast","settings"},
         "manager": {"members","applications","payments","broadcast","settings"},
