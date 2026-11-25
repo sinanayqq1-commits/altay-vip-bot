@@ -89,8 +89,13 @@ def init_db():
             target_user_id INTEGER, details TEXT, created_at TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS recurring_announcements(
             announcement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT NOT NULL DEFAULT 'legacy_single',
             send_time TEXT NOT NULL, message TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1, last_sent_date TEXT)""")
+        recurring_columns = {row[1] for row in c.execute("PRAGMA table_info(recurring_announcements)").fetchall()}
+        if "tenant_id" not in recurring_columns:
+            c.execute("ALTER TABLE recurring_announcements ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'legacy_single'")
+        c.execute("UPDATE recurring_announcements SET tenant_id='legacy_single' WHERE tenant_id IS NULL OR tenant_id=''")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
@@ -869,7 +874,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
     elif q.data == "tenantpanel:autoposts":
         with connect() as conn:
-            rows = conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements ORDER BY send_time").fetchall()
+            rows = conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements WHERE tenant_id='legacy_single' ORDER BY send_time").fetchall()
         lines = ["📣 OTOMATİK DUYURULAR", "", "/otomatikduyuru SS:DD | Mesaj", "/otomatikduyurular", "/otomatikduyurusil ID", ""]
         for row in rows: lines.append(f"#{row['announcement_id']} — {row['send_time']} — {'Aktif' if row['enabled'] else 'Kapalı'}\n{row['message'][:100]}")
         if not rows: lines.append("Henüz otomatik duyuru yok.")
@@ -1471,11 +1476,15 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
 async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
     current = now()
     with connect() as conn:
-        rows = conn.execute("SELECT announcement_id,send_time,message,last_sent_date FROM recurring_announcements WHERE enabled=1").fetchall()
-        targets = [int(r[0]) for r in conn.execute("SELECT channel_id FROM tenant_channels WHERE status='active' AND channel_type IN ('vip','genel','chat')").fetchall()]
-    if not targets and channel_id(): targets = [int(channel_id())]
+        rows = conn.execute("SELECT announcement_id,tenant_id,send_time,message,last_sent_date FROM recurring_announcements WHERE enabled=1").fetchall()
     for row in rows:
         if row["send_time"] != current.strftime("%H:%M") or row["last_sent_date"] == current.date().isoformat(): continue
+        with connect() as conn:
+            targets = [int(r[0]) for r in conn.execute("""SELECT channel_id FROM tenant_channels
+                WHERE tenant_id=? AND status='active' AND channel_type IN ('vip','genel','chat')
+                ORDER BY channel_id""", (row["tenant_id"],)).fetchall()]
+        if not targets and row["tenant_id"] == "legacy_single" and channel_id():
+            targets = [int(channel_id())]
         sent = 0
         for target in sorted(set(targets)):
             try:
@@ -1485,7 +1494,7 @@ async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
             with connect() as conn:
                 conn.execute("UPDATE recurring_announcements SET last_sent_date=? WHERE announcement_id=?",
                              (current.date().isoformat(), row["announcement_id"]))
-            log_admin_action(0, "Otomatik duyuru gönderimi", None, f"#{row['announcement_id']}; {sent} kanal")
+            log_admin_action(0, "Otomatik duyuru gönderimi", None, f"tenant={row['tenant_id']}; #{row['announcement_id']}; {sent} kanal")
 
 async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
     """Send a recurring GOLDEN VIP invitation to the registered chat group."""
@@ -2189,7 +2198,7 @@ async def recurring_announcement_add(update: Update, context: ContextTypes.DEFAU
     except ValueError:
         await update.effective_message.reply_text("Saat SS:DD olmalı; mesaj 1–3500 karakter olmalı."); return
     with connect() as conn:
-        cur=conn.execute("INSERT INTO recurring_announcements(send_time,message,enabled) VALUES(?,?,1)",(clock,message))
+        cur=conn.execute("INSERT INTO recurring_announcements(tenant_id,send_time,message,enabled) VALUES('legacy_single',?,?,1)",(clock,message))
     log_admin_action(update.effective_user.id,"Otomatik duyuru oluşturuldu",None,f"#{cur.lastrowid}; {clock}")
     await update.effective_message.reply_text(f"✅ Her gün {clock} için duyuru kaydedildi. ID: {cur.lastrowid}")
 
