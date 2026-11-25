@@ -146,7 +146,8 @@ def tenant_permissions(uid):
 
 
 def can_open_admin_panel(uid):
-    return admin(uid) or bool(tenant_permissions(uid))
+    # Ana yönetim paneli yalnızca ADMIN_IDS içindeki hesaplara açıktır.
+    return admin(uid)
 
 
 def admin_panel_keyboard():
@@ -336,13 +337,22 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     action, uid_s = q.data.split(":")
     uid = int(uid_s)
+    # Eski veya daha önce kullanılmış butonlar ikinci kez işlem yapamasın.
+    with connect() as c:
+        application = c.execute(
+            "SELECT status FROM applications WHERE user_id=?", (uid,)
+        ).fetchone()
+    if not application or application["status"] != "pending":
+        await q.answer("Bu başvuru bulunamadı veya daha önce işleme alınmış.", show_alert=True)
+        await q.edit_message_reply_markup(reply_markup=None)
+        return
     if action == "approve":
         await approve(context, uid, 30)
         await q.edit_message_reply_markup(reply_markup=None)
         await q.message.reply_text(f"{uid} kullanıcısına 30 günlük VIP üyelik verildi.")
-    else:
+    elif action == "reject":
         with connect() as c:
-            c.execute("UPDATE applications SET status='rejected' WHERE user_id=?", (uid,))
+            c.execute("UPDATE applications SET status='rejected' WHERE user_id=? AND status='pending'", (uid,))
         try:
             await context.bot.send_message(
                 uid, "VIP başvurun onaylanmadı. Bilgi için yöneticiyle görüşebilirsin."
