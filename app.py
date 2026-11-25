@@ -963,20 +963,22 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines.append(f"• {row['user_id']} — {row['role']} — {row['channel_name'] or 'Genel'}")
             if row['role'] != 'owner' and row['channel_id'] is not None:
                 revoke_map[str(revoke_index)] = (tenant_key, int(row['channel_id']), int(row['user_id']), row['role'])
-                buttons.append([InlineKeyboardButton(f"❌ {row['user_id']} / {row['role']}", callback_data=f"atr:{revoke_index}")])
+                buttons.append([InlineKeyboardButton(f"❌ {row['user_id']} / {row['role']}", callback_data=f"tenantpanel:atr:{revoke_index}")])
                 revoke_index += 1
         context.user_data["admin_team_revoke_map"] = revoke_map
         if not roles: lines.append("Henüz ekip yetkilisi yok.")
         lines += ["", "Yeni yetkili eklemek için kanal seç:"]
-        for ch in channels:
-            buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"atg:{tenant_key}:{ch['channel_id']}")])
+        grant_map = {str(i): (tenant_key, int(ch["channel_id"])) for i, ch in enumerate(channels)}
+        context.user_data["admin_team_grant_map"] = grant_map
+        for i, ch in enumerate(channels):
+            buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"tenantpanel:atg:{i}")])
         buttons.append([InlineKeyboardButton("⬅️ Müşteri listesi", callback_data="tenantpanel:adminteams")])
         await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
 
-    elif q.data.startswith("atg:"):
+    elif q.data.startswith("tenantpanel:atg:"):
         parts = q.data.split(":")
         try:
-            tenant_key, cid = parts[1], int(parts[2])
+            tenant_key, cid = context.user_data.get("admin_team_grant_map", {})[parts[2]]
             with connect() as c:
                 channel = c.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tenant_key,cid)).fetchone()
             if not channel: raise ValueError()
@@ -988,9 +990,9 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]])
         )
 
-    elif q.data.startswith("atr:"):
+    elif q.data.startswith("tenantpanel:atr:"):
         try:
-            index = q.data.split(":",1)[1]
+            index = q.data.split(":",2)[2]
             item = context.user_data.get("admin_team_revoke_map", {}).get(index)
             if not item: raise ValueError()
             tenant_key, cid, target, role = item
@@ -1003,11 +1005,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Ekip kaydı bulunamadı.", show_alert=True); return
         await q.edit_message_text(f"{target} kullanıcısının {role} yetkisi kaldırılacak. Onaylıyor musun?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Evet, kaldır", callback_data="atry")],
+                [InlineKeyboardButton("Evet, kaldır", callback_data="tenantpanel:atry")],
                 [InlineKeyboardButton("Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]
             ]))
 
-    elif q.data == "atry":
+    elif q.data == "tenantpanel:atry":
         pending = context.user_data.pop("pending_admin_team_revoke", None)
         if not pending:
             await q.answer("İşlem süresi dolmuş. Müşteri listesini yeniden aç.", show_alert=True); return
