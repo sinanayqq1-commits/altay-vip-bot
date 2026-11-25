@@ -288,6 +288,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("👥 VIP üyeler", callback_data="tenantpanel:members"),
          InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
+        [InlineKeyboardButton("🛡 Müşteri ekiplerini yönet", callback_data="tenantpanel:adminteams")],
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
         [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
@@ -937,6 +938,82 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             "🛠 GOLDEN VIP — YÖNETİM PANELİ\n\nİşlem yapmak için aşağıdan bir bölüm seç.",
             reply_markup=admin_panel_keyboard()
         )
+    elif q.data == "tenantpanel:adminteams":
+        with connect() as c:
+            tenants = c.execute("SELECT tenant_id,tenant_name,status FROM tenants ORDER BY tenant_name").fetchall()
+        buttons = [[InlineKeyboardButton(f"{t['tenant_name']} — {t['status']}", callback_data=f"tenantpanel:admintenant:{t['tenant_id']}")] for t in tenants]
+        buttons.append([InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")])
+        await q.edit_message_text("🛡 MÜŞTERİ EKİP YÖNETİMİ\\n\\nEkiplerini yönetmek istediğin müşteriyi seç:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith("tenantpanel:admintenant:"):
+        tenant_key = q.data.split(":", 2)[2]
+        with connect() as c:
+            tenant = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?", (tenant_key,)).fetchone()
+            roles = c.execute("""SELECT a.user_id,a.role,a.channel_id,ch.channel_name
+                FROM tenant_admins a LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
+                WHERE a.tenant_id=? AND a.status='active' ORDER BY ch.channel_name,a.user_id,a.role""", (tenant_key,)).fetchall()
+            channels = c.execute("SELECT channel_id,channel_name FROM tenant_channels WHERE tenant_id=? AND status='active' ORDER BY channel_name", (tenant_key,)).fetchall()
+        if not tenant:
+            await q.answer("Müşteri bulunamadı.", show_alert=True); return
+        lines = [f"🛡 {tenant['tenant_name']} — EKİP", ""]
+        buttons = []
+        for row in roles:
+            lines.append(f"• {row['user_id']} — {row['role']} — {row['channel_name'] or 'Genel'}")
+            if row['role'] != 'owner' and row['channel_id'] is not None:
+                buttons.append([InlineKeyboardButton(f"❌ {row['user_id']} / {row['role']}", callback_data=f"tenantpanel:adminteamrevokeask:{tenant_key}:{row['channel_id']}:{row['user_id']}:{row['role']}")])
+        if not roles: lines.append("Henüz ekip yetkilisi yok.")
+        lines += ["", "Yeni yetkili eklemek için kanal seç:"]
+        for ch in channels:
+            buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"tenantpanel:adminteamgrant:{tenant_key}:{ch['channel_id']}")])
+        buttons.append([InlineKeyboardButton("⬅️ Müşteri listesi", callback_data="tenantpanel:adminteams")])
+        await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith("tenantpanel:adminteamgrant:"):
+        parts = q.data.split(":")
+        try:
+            tenant_key, cid = parts[2], int(parts[3])
+            with connect() as c:
+                channel = c.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tenant_key,cid)).fetchone()
+            if not channel: raise ValueError()
+        except (ValueError,IndexError,TypeError):
+            await q.answer("Kanal bulunamadı.", show_alert=True); return
+        context.user_data["pending_admin_team"] = {"tenant_id":tenant_key,"channel_id":cid,"created_by":uid}
+        await q.edit_message_text(
+            f"➕ EKİP YETKİSİ — {channel['channel_name']}\\n\\nTelegram kullanıcı ID ve rolü yaz.\\nÖrnek: 123456789 moderator\\n\\nRoller: manager, moderator, finance, publisher",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]])
+        )
+
+    elif q.data.startswith("tenantpanel:adminteamrevokeask:"):
+        parts = q.data.split(":")
+        try:
+            tenant_key, cid, target, role = parts[2], int(parts[3]), int(parts[4]), parts[5]
+            with connect() as c:
+                row = c.execute("""SELECT 1 FROM tenant_admins WHERE tenant_id=? AND channel_id=?
+                    AND user_id=? AND role=? AND status='active'""", (tenant_key,cid,target,role)).fetchone()
+            if not row or role == "owner": raise ValueError()
+        except (ValueError,IndexError,TypeError):
+            await q.answer("Ekip kaydı bulunamadı.", show_alert=True); return
+        await q.edit_message_text(f"{target} kullanıcısının {role} yetkisi kaldırılacak. Onaylıyor musun?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Evet, kaldır", callback_data=f"tenantpanel:adminteamrevoke:{tenant_key}:{cid}:{target}:{role}")],
+                [InlineKeyboardButton("Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]
+            ]))
+
+    elif q.data.startswith("tenantpanel:adminteamrevoke:"):
+        parts = q.data.split(":")
+        try:
+            tenant_key, cid, target, role = parts[2], int(parts[3]), int(parts[4]), parts[5]
+            with connect() as c:
+                cur = c.execute("""UPDATE tenant_admins SET status='inactive' WHERE tenant_id=? AND channel_id=?
+                    AND user_id=? AND role=? AND status='active'""", (tenant_key,cid,target,role))
+            if cur.rowcount == 0 or role == "owner": raise ValueError()
+            log_admin_action(uid, "Ana yönetici müşteri ekip yetkisini kaldırdı", target, f"tenant={tenant_key}; kanal={cid}; rol={role}")
+            await q.edit_message_text("✅ Ekip yetkisi kaldırıldı.", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Müşteri ekibine dön", callback_data=f"tenantpanel:admintenant:{tenant_key}")],
+                [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]]))
+        except (ValueError,IndexError,TypeError):
+            await q.answer("Yetki kaldırılamadı.", show_alert=True)
+
     elif q.data == "tenantpanel:channels":
         if admin(uid):
             with connect() as c:
@@ -2498,6 +2575,33 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_team = context.user_data.get("pending_admin_team")
+    if admin_team:
+        actor_id = update.effective_user.id
+        if not admin(actor_id) or admin_team.get("created_by") != actor_id:
+            context.user_data.pop("pending_admin_team", None)
+            await update.effective_message.reply_text("Bu işlem ana yöneticiye ait değil; iptal edildi.")
+            return
+        try:
+            bits = (update.effective_message.text or "").strip().split()
+            if len(bits) != 2: raise ValueError()
+            target, role = int(bits[0]), bits[1].lower()
+            if target <= 0 or target == actor_id or role not in ("manager","moderator","finance","publisher"):
+                raise ValueError()
+            tid, cid = admin_team["tenant_id"], admin_team["channel_id"]
+            with connect() as conn:
+                channel = conn.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tid,cid)).fetchone()
+                if not channel: raise ValueError()
+                conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+                    VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
+                    DO UPDATE SET status='active'""", (tid,target,role,cid,now().isoformat()))
+            context.user_data.pop("pending_admin_team", None)
+            log_admin_action(actor_id, "Ana yönetici müşteri ekibine yetki verdi", target, f"tenant={tid}; kanal={cid}; rol={role}")
+            await update.effective_message.reply_text(f"✅ {target} kullanıcısına {channel['channel_name']} kanalında {role} yetkisi verildi.")
+        except (ValueError,IndexError,TypeError):
+            await update.effective_message.reply_text("Bilgiler geçersiz. Örnek: 123456789 moderator")
+        return
+
     team_pending = context.user_data.get("pending_team_grant")
     if team_pending:
         actor_id = update.effective_user.id
