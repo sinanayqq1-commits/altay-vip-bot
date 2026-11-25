@@ -87,6 +87,10 @@ def init_db():
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
             actor_id INTEGER NOT NULL, action TEXT NOT NULL,
             target_user_id INTEGER, details TEXT, created_at TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS recurring_announcements(
+            announcement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            send_time TEXT NOT NULL, message TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, last_sent_date TEXT)""")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
@@ -258,6 +262,8 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
         [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
         [InlineKeyboardButton("🧾 Yönetici işlem geçmişi", callback_data="tenantpanel:audit")],
+        [InlineKeyboardButton("🛡 Yönetici yetkileri", callback_data="tenantpanel:admins"),
+         InlineKeyboardButton("📣 Otomatik duyurular", callback_data="tenantpanel:autoposts")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
@@ -682,6 +688,39 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             ])
         )
 
+    elif q.data.startswith("tenantpanel:userhistory:"):
+        parts = q.data.split(":")
+        try:
+            kind = parts[2]
+            if kind == "legacy" and len(parts) == 4:
+                member_id = int(parts[3]); back = f"tenantpanel:memberdetail:legacy:{member_id}"
+            elif kind == "tenant" and len(parts) == 5:
+                channel_value = int(parts[3]); member_id = int(parts[4])
+                back = f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}"
+            else: raise ValueError()
+            with connect() as conn:
+                logs = conn.execute("""SELECT actor_id,action,details,created_at FROM admin_audit_log
+                    WHERE target_user_id=? ORDER BY audit_id DESC LIMIT 20""", (member_id,)).fetchall()
+                pays = conn.execute("""SELECT amount,note,paid_at FROM membership_payments
+                    WHERE user_id=? ORDER BY payment_id DESC LIMIT 10""", (member_id,)).fetchall()
+            lines = [f"🧾 ÜYE İŞLEM GEÇMİŞİ — {member_id}", "", "Yönetici işlemleri:"]
+            for item in logs:
+                stamp = datetime.fromisoformat(item["created_at"])
+                lines.append(f"• {stamp:%d.%m.%Y %H:%M} — {item['action']} (Yönetici: {item['actor_id']})")
+                if item["details"]: lines.append(f"  {item['details'][:120]}")
+            if not logs: lines.append("Yönetici işlem kaydı yok.")
+            lines += ["", "Ödemeler:"]
+            for item in pays:
+                stamp = datetime.fromisoformat(item["paid_at"])
+                lines.append(f"• {stamp:%d.%m.%Y} — {item['amount']:,.2f} TL" + (f" ({item['note']})" if item["note"] else ""))
+            if not pays: lines.append("Ödeme kaydı yok.")
+            await q.edit_message_text("\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Üye detayına dön", callback_data=back)],
+                [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]]))
+        except (ValueError, IndexError, TypeError):
+            await q.answer("Üye geçmişi açılamadı.", show_alert=True)
+            return
+
     elif q.data.startswith("tenantpanel:payadd:"):
         parts = q.data.split(":")
         try:
@@ -802,12 +841,37 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         pay_scope = f"legacy:{member_id}" if extend_kind == "legacy" else f"tenant:{channel_value}:{member_id}"
         await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup(
             extend_buttons + [
+                [InlineKeyboardButton("🧾 Üye işlem geçmişi", callback_data=f"tenantpanel:userhistory:{pay_scope}")],
                 [InlineKeyboardButton("💳 Ödeme kaydet", callback_data=f"tenantpanel:payadd:{pay_scope}")],
                 [InlineKeyboardButton("📒 Ödeme geçmişi", callback_data=f"tenantpanel:payhistory:{pay_scope}")],
                 [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
                 [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
             ]
         ))
+
+    elif q.data == "tenantpanel:admins":
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.", show_alert=True); return
+        with connect() as conn:
+            rows = conn.execute("""SELECT a.user_id,a.role,a.tenant_id,a.channel_id,t.tenant_name,ch.channel_name
+                FROM tenant_admins a LEFT JOIN tenants t ON t.tenant_id=a.tenant_id
+                LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
+                WHERE a.status='active' ORDER BY a.user_id LIMIT 40""").fetchall()
+        lines = ["🛡 YÖNETİCİ YETKİLERİ", "",
+                 "/yetkiver ID rol [KANAL_ID]", "/yetkikaldir ID [KANAL_ID]", "/yetkililer",
+                 "Roller: owner, manager, moderator, finance, publisher", ""]
+        for row in rows:
+            lines.append(f"• {row['user_id']} — {row['role']} — {row['tenant_name'] or row['tenant_id']} / {row['channel_name'] or 'Genel'}")
+        if not rows: lines.append("Ek yönetici kaydı yok.")
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+
+    elif q.data == "tenantpanel:autoposts":
+        with connect() as conn:
+            rows = conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements ORDER BY send_time").fetchall()
+        lines = ["📣 OTOMATİK DUYURULAR", "", "/otomatikduyuru SS:DD | Mesaj", "/otomatikduyurular", "/otomatikduyurusil ID", ""]
+        for row in rows: lines.append(f"#{row['announcement_id']} — {row['send_time']} — {'Aktif' if row['enabled'] else 'Kapalı'}\n{row['message'][:100]}")
+        if not rows: lines.append("Henüz otomatik duyuru yok.")
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:audit":
         with connect() as conn:
@@ -1350,7 +1414,7 @@ async def handle_vip_join_request(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reject re-entry to registered VIP channels without a current active membership."""
+    """Welcome new discussion-group members and enforce access only in VIP channels."""
     cm = update.chat_member
     if not cm or not cm.new_chat_member or cm.new_chat_member.status not in ("member", "administrator", "creator"):
         return
@@ -1358,6 +1422,20 @@ async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_T
     user_id = cm.new_chat_member.user.id
     if cm.old_chat_member and cm.old_chat_member.status in ("member", "administrator", "creator"):
         return
+    registered = tenant_for_channel(chat_id)
+    if not registered: return
+    tenant_key, channel_name, channel_type = registered
+    if channel_type == "chat":
+        with connect() as conn:
+            setting = conn.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='welcome_message'",
+                                   (tenant_key,)).fetchone()
+        welcome = setting[0] if setting else "👋 Hoş geldin {name}! GOLDEN CLUB sohbetimize hoş geldin."
+        try:
+            await context.bot.send_message(chat_id, welcome.replace("{name}", cm.new_chat_member.user.first_name or "arkadaşımız"))
+        except Exception:
+            log.exception("Karşılama mesajı gönderilemedi: %s", chat_id)
+        return
+    if channel_type != "vip": return
     current = now().isoformat()
     with connect() as c:
         tenant_ok = c.execute("""SELECT 1 FROM tenant_memberships
@@ -1387,6 +1465,25 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
     await send_golden_group_promo(context)
     await update.effective_message.reply_text("Test gönderimi tetiklendi. GOLDEN CLUB SOHBET grubunu kontrol et.")
 
+
+async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
+    current = now()
+    with connect() as conn:
+        rows = conn.execute("SELECT announcement_id,send_time,message,last_sent_date FROM recurring_announcements WHERE enabled=1").fetchall()
+        targets = [int(r[0]) for r in conn.execute("SELECT channel_id FROM tenant_channels WHERE status='active' AND channel_type IN ('vip','genel','chat')").fetchall()]
+    if not targets and channel_id(): targets = [int(channel_id())]
+    for row in rows:
+        if row["send_time"] != current.strftime("%H:%M") or row["last_sent_date"] == current.date().isoformat(): continue
+        sent = 0
+        for target in sorted(set(targets)):
+            try:
+                await context.bot.send_message(chat_id=target, text=row["message"]); sent += 1
+            except Exception: log.exception("Otomatik duyuru gönderilemedi: %s", target)
+        if sent:
+            with connect() as conn:
+                conn.execute("UPDATE recurring_announcements SET last_sent_date=? WHERE announcement_id=?",
+                             (current.date().isoformat(), row["announcement_id"]))
+            log_admin_action(0, "Otomatik duyuru gönderimi", None, f"#{row['announcement_id']}; {sent} kanal")
 
 async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
     """Send a recurring GOLDEN VIP invitation to the registered chat group."""
@@ -1561,6 +1658,7 @@ async def post_init(app):
     app.job_queue.run_repeating(expire, interval=300, first=20, name="vip-expiry")
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
     app.job_queue.run_repeating(send_membership_reminders, interval=21600, first=60, name="membership-reminders")
+    app.job_queue.run_repeating(send_recurring_announcements, interval=60, first=10, name="recurring-announcements")
     app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=0, name="golden-group-promo")
     app.job_queue.run_daily(create_database_backup, time=datetime.strptime("03:00", "%H:%M").time().replace(tzinfo=TZ), days=(0,), name="weekly-database-backup")
 
@@ -1717,6 +1815,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
             await q.answer("Onaylandı ancak kullanıcı botu başlatmadığı için özel mesaj gönderilemedi.", show_alert=True)
             await q.edit_message_reply_markup(reply_markup=None)
             return
+        log_admin_action(q.from_user.id, "VIP başvurusu onaylandı", user_id, f"30 gün; {tenant_id}; kanal={vip_channel_id}")
         await q.answer("VIP üyeliği 30 gün onaylandı.")
         await q.edit_message_reply_markup(reply_markup=None)
         await q.message.reply_text(f"✅ {user_id} kullanıcısına 30 günlük VIP üyelik verildi.")
@@ -1727,6 +1826,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
             await context.bot.send_message(user_id, "VIP başvurun onaylanmadı. Bilgi için yöneticiyle görüşebilirsin.")
         except Exception:
             log.info("Reddedilen kullanıcıya bildirim gönderilemedi: %s", user_id)
+        log_admin_action(q.from_user.id, "VIP başvurusu reddedildi", user_id, f"{tenant_id}; kanal={chat_id}")
         await q.answer("Başvuru reddedildi.")
         await q.edit_message_reply_markup(reply_markup=None)
         await q.message.reply_text(f"❌ {user_id} kullanıcısının başvurusu reddedildi.")
@@ -1968,7 +2068,121 @@ async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             failed += 1
             log.exception('Toplu paylaşım başarısız: %s', cid)
+    log_admin_action(uid, "Toplu duyuru", None, f"Başarılı: {ok}; başarısız: {failed}")
     await update.message.reply_text(f'Toplu paylaşım tamamlandı. Başarılı: {ok} | Başarısız: {failed}')
+
+async def grant_manager_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args) not in (2,3):
+        await update.effective_message.reply_text("Kullanım: /yetkiver ID owner|manager|moderator|finance|publisher [KANAL_ID]"); return
+    try:
+        target=int(context.args[0]); role=context.args[1].lower()
+        cid=int(context.args[2]) if len(context.args)==3 else None
+        if target<=0 or role not in ("owner","manager","moderator","finance","publisher"): raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("ID, rol veya kanal bilgisi geçersiz."); return
+    if target in ADMIN_IDS:
+        await update.effective_message.reply_text("Ana yöneticiye ek rol gerekmez."); return
+    with connect() as conn:
+        tenant = conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=? AND status='active'",(cid,)).fetchone() if cid else conn.execute("SELECT tenant_id FROM tenants WHERE tenant_id='legacy_single' AND status='active'").fetchone()
+        if not tenant:
+            await update.effective_message.reply_text("Aktif müşteri bulunamadı. Kanal ID belirterek tekrar dene."); return
+        tid=tenant["tenant_id"]
+        conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+            VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'""",
+            (tid,target,role,cid,now().isoformat()))
+    log_admin_action(update.effective_user.id,"Yönetici yetkisi verildi",target,f"{role}; {tid}; kanal={cid or 'genel'}")
+    await update.effective_message.reply_text(f"✅ {target} kullanıcısına {role} yetkisi verildi.")
+
+async def revoke_manager_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args) not in (1,2):
+        await update.effective_message.reply_text("Kullanım: /yetkikaldir ID [KANAL_ID]"); return
+    try: target=int(context.args[0]); cid=int(context.args[1]) if len(context.args)==2 else None
+    except ValueError:
+        await update.effective_message.reply_text("Geçerli ID gir."); return
+    with connect() as conn:
+        cur=conn.execute("UPDATE tenant_admins SET status='inactive' WHERE user_id=? AND status='active'"+(" AND channel_id=?" if cid is not None else ""),
+                         (target,cid) if cid is not None else (target,))
+    log_admin_action(update.effective_user.id,"Yönetici yetkisi kaldırıldı",target,f"Kanal={cid or 'tümü'}; kayıt={cur.rowcount}")
+    await update.effective_message.reply_text(f"✅ {target} için {cur.rowcount} yetki kaydı kapatıldı.")
+
+async def list_manager_roles(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    with connect() as conn:
+        rows=conn.execute("""SELECT a.user_id,a.role,a.tenant_id,a.channel_id,t.tenant_name,ch.channel_name
+            FROM tenant_admins a LEFT JOIN tenants t ON t.tenant_id=a.tenant_id
+            LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id WHERE a.status='active' ORDER BY a.user_id""").fetchall()
+    lines=["🛡 AKTİF YÖNETİCİLER"]+[f"• {r['user_id']} — {r['role']} — {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or 'Genel'}" for r in rows]
+    await update.effective_message.reply_text("\n".join(lines)[:4000] if rows else "Ek yönetici kaydı yok.")
+
+async def recurring_announcement_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    raw=update.effective_message.text.partition(" ")[2].strip()
+    if "|" not in raw:
+        await update.effective_message.reply_text("Kullanım: /otomatikduyuru SS:DD | Her gün gönderilecek mesaj"); return
+    clock,message=[x.strip() for x in raw.split("|",1)]
+    try:
+        datetime.strptime(clock,"%H:%M")
+        if not message or len(message)>3500: raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Saat SS:DD olmalı; mesaj 1–3500 karakter olmalı."); return
+    with connect() as conn:
+        cur=conn.execute("INSERT INTO recurring_announcements(send_time,message,enabled) VALUES(?,?,1)",(clock,message))
+    log_admin_action(update.effective_user.id,"Otomatik duyuru oluşturuldu",None,f"#{cur.lastrowid}; {clock}")
+    await update.effective_message.reply_text(f"✅ Her gün {clock} için duyuru kaydedildi. ID: {cur.lastrowid}")
+
+async def recurring_announcement_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    with connect() as conn:
+        rows=conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements ORDER BY send_time").fetchall()
+    lines=["📣 OTOMATİK DUYURULAR"]+[f"#{r['announcement_id']} — {r['send_time']} — {'Aktif' if r['enabled'] else 'Kapalı'}\n{r['message'][:150]}" for r in rows]
+    await update.effective_message.reply_text("\n\n".join(lines)[:4000] if rows else "Otomatik duyuru yok.")
+
+async def recurring_announcement_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args)!=1 or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Kullanım: /otomatikduyurusil ID"); return
+    aid=int(context.args[0])
+    with connect() as conn: cur=conn.execute("DELETE FROM recurring_announcements WHERE announcement_id=?",(aid,))
+    log_admin_action(update.effective_user.id,"Otomatik duyuru silindi",None,f"#{aid}")
+    await update.effective_message.reply_text("Duyuru silindi." if cur.rowcount else "Duyuru bulunamadı.")
+
+async def set_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    raw=update.effective_message.text.partition(" ")[2].strip()
+    tid="legacy_single"
+    if raw.lower()=="kapat":
+        with connect() as conn: conn.execute("DELETE FROM tenant_settings WHERE tenant_id=? AND setting_key='welcome_message'",(tid,))
+        log_admin_action(update.effective_user.id,"Karşılama mesajı kapatıldı")
+        await update.effective_message.reply_text("Karşılama mesajı kapatıldı."); return
+    if not raw or len(raw)>900:
+        await update.effective_message.reply_text("Kullanım: /karsilama Hoş geldin {name}!\nKapatmak: /karsilama kapat"); return
+    with connect() as conn:
+        conn.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at) VALUES(?,?,?,?)
+            ON CONFLICT(tenant_id,setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+            (tid,"welcome_message",raw,now().isoformat()))
+    log_admin_action(update.effective_user.id,"Karşılama mesajı güncellendi",None,raw[:120])
+    await update.effective_message.reply_text("✅ Karşılama mesajı kaydedildi. {name} üyenin adıyla değişir.")
+
+async def user_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args)!=1 or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Kullanım: /uyegecmis KULLANICI_ID"); return
+    uid=int(context.args[0])
+    with connect() as conn:
+        logs=conn.execute("SELECT actor_id,action,details,created_at FROM admin_audit_log WHERE target_user_id=? ORDER BY audit_id DESC LIMIT 25",(uid,)).fetchall()
+        pays=conn.execute("SELECT amount,note,paid_at FROM membership_payments WHERE user_id=? ORDER BY payment_id DESC LIMIT 15",(uid,)).fetchall()
+    lines=[f"🧾 ÜYE GEÇMİŞİ — {uid}","","Yönetici işlemleri:"]
+    for r in logs:
+        stamp=datetime.fromisoformat(r["created_at"]); lines.append(f"• {stamp:%d.%m.%Y %H:%M} — {r['action']} — yönetici {r['actor_id']}")
+        if r["details"]: lines.append("  "+r["details"][:120])
+    if not logs: lines.append("İşlem kaydı yok.")
+    lines.append("\nÖdemeler:")
+    for r in pays:
+        stamp=datetime.fromisoformat(r["paid_at"]); lines.append(f"• {stamp:%d.%m.%Y} — {r['amount']:,.2f} TL"+(f" ({r['note']})" if r["note"] else ""))
+    if not pays: lines.append("Ödeme kaydı yok.")
+    await update.effective_message.reply_text("\n".join(lines)[:4000])
 
 async def list_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Destek butonu doğrudan botun yapılandırılmış ana yöneticisinin Telegram profiline gider.
@@ -2010,6 +2224,14 @@ def main():
     app.add_handler(CommandHandler("planla", plan))
     app.add_handler(CommandHandler("planlar", plans))
     app.add_handler(CommandHandler("iptal", cancel))
+    app.add_handler(CommandHandler("yetkiver", grant_manager_role))
+    app.add_handler(CommandHandler("yetkikaldir", revoke_manager_role))
+    app.add_handler(CommandHandler("yetkililer", list_manager_roles))
+    app.add_handler(CommandHandler("otomatikduyuru", recurring_announcement_add))
+    app.add_handler(CommandHandler("otomatikduyurular", recurring_announcement_list))
+    app.add_handler(CommandHandler("otomatikduyurusil", recurring_announcement_delete))
+    app.add_handler(CommandHandler("karsilama", set_welcome_message))
+    app.add_handler(CommandHandler("uyegecmis", user_history_command))
     app.add_handler(CallbackQueryHandler(tenant_panel_callbacks, pattern=r"^tenantpanel:"))
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r"^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(buttons, pattern=r"^(apply|status|support)$"))
