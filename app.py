@@ -1602,9 +1602,9 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
                 await context.bot.send_photo(chat_id=group_id, photo=photo_id,
-                                              caption=promo_text[:1024], reply_markup=kb)
+                                              caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb)
             else:
-                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], reply_markup=kb)
+                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
             sent += 1
         except Exception as exc:
             failed += 1
@@ -1691,9 +1691,9 @@ async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
                 await context.bot.send_photo(chat_id=group_id, photo=photo_id,
-                                              caption=promo_text[:1024], reply_markup=kb)
+                                              caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb)
             else:
-                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], reply_markup=kb)
+                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
             with connect() as c:
                 c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
                     VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
@@ -2289,10 +2289,13 @@ async def set_promo_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("Tanıtım ayarları için yetkin bulunmuyor."); return
     command = update.effective_message.text.split()[0].split("@")[0].lower()
     raw = update.effective_message.text.partition(" ")[2].strip()
+    # Telegram mesajındaki kalın/italik/altı çizili biçimleri HTML olarak sakla.
+    formatted = (update.effective_message.text_html or update.effective_message.text)
+    formatted = formatted.partition(" ")[2].strip()
     if command == "/tanitimmetin":
         if not raw or len(raw) > 3500:
             await update.effective_message.reply_text("Metin 1–3500 karakter olmalı. Kullanım: /tanitimmetin Tanıtım metni"); return
-        key, value, reply = "promo_text", raw, "✅ Tanıtım metni kaydedildi."
+        key, value, reply = "promo_text", formatted, "✅ Tanıtım metni ve yazı biçimleri kaydedildi."
     elif command == "/tanitimbuton":
         if not raw or len(raw) > 60:
             await update.effective_message.reply_text("Buton yazısı 1–60 karakter olmalı."); return
