@@ -252,6 +252,35 @@ async def cleanup_vip_invite_message(context, user_id, chat_id):
         c.execute("DELETE FROM vip_invite_messages WHERE user_id=? AND chat_id=?", (user_id, chat_id))
 
 
+
+PLAN_CATALOG = {
+    "starter": {"name": "Başlangıç", "price": 499, "channels": 2, "team": 2},
+    "professional": {"name": "Profesyonel", "price": 999, "channels": 5, "team": 5},
+    "vip": {"name": "VIP", "price": 1999, "channels": 15, "team": 15},
+}
+
+
+def tenant_plan_usage(tenant_id):
+    with connect() as c:
+        row = c.execute("SELECT plan_name FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+        channels = c.execute("SELECT COUNT(*) FROM tenant_channels WHERE tenant_id=? AND status='active'", (tenant_id,)).fetchone()[0]
+        team = c.execute("""SELECT COUNT(DISTINCT user_id) FROM tenant_admins
+            WHERE tenant_id=? AND status='active' AND role!='owner'""", (tenant_id,)).fetchone()[0]
+    plan = PLAN_CATALOG.get(row["plan_name"] if row else "", None)
+    return plan, channels, team
+
+
+def plan_limit_message(tenant_id, resource):
+    plan, channels, team = tenant_plan_usage(tenant_id)
+    if not plan:
+        return None
+    if resource == "channels" and channels >= plan["channels"]:
+        return f"⛔ {plan['name']} paketinde en fazla {plan['channels']} aktif kanal/grup olabilir. Paketi yükseltmek için ana yöneticiyle görüş."
+    if resource == "team" and team >= plan["team"]:
+        return f"⛔ {plan['name']} paketinde en fazla {plan['team']} ekip kullanıcısı olabilir. Paketi yükseltmek için ana yöneticiyle görüş."
+    return None
+
+
 def admin(uid):
     return uid in ADMIN_IDS
 
@@ -1201,6 +1230,11 @@ async def team_role_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         is_owner = any(r['role'] == 'owner' and (r['channel_id'] is None or int(r['channel_id']) == channel_value) for r in actor_roles)
         if role == 'manager' and not is_owner:
             await q.answer('Yönetici yetkisini yalnızca müşteri sahibi verebilir.', show_alert=True)
+            return
+        already_member = c.execute("SELECT 1 FROM tenant_admins WHERE tenant_id=? AND user_id=? AND status='active'", (tenant_id,target)).fetchone()
+        limit_error = None if already_member else plan_limit_message(tenant_id, 'team')
+        if limit_error:
+            await q.answer(limit_error, show_alert=True)
             return
         c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
             VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
@@ -2648,6 +2682,11 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("Yayın kanalını özel sohbetten kaydetmek için /kanalkaydet vip @kanaladi veya /kanalkaydet genel @kanaladi yaz.")
             return
 
+    limit_error = plan_limit_message(tenant_id, 'channels')
+    if limit_error:
+        await msg.reply_text(limit_error)
+        return
+
     with connect() as c:
         existing = c.execute('SELECT tenant_id FROM tenant_channels WHERE channel_id=?', (target_chat.id,)).fetchone()
         if existing and existing['tenant_id'] != tenant_id:
@@ -2717,6 +2756,46 @@ async def tenant_license_command(update: Update, context: ContextTypes.DEFAULT_T
     log_admin_action(update.effective_user.id, "Müşteri lisansı uzatıldı", None,
                      f"tenant={tenant_id}; gün={days}; bitiş={expires.isoformat()}")
     await update.effective_message.reply_text(f"✅ {row['tenant_name']} lisansı {days} gün uzatıldı. Bitiş: {expires:%d.%m.%Y %H:%M}")
+
+
+
+async def package_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    lines = ["📦 SATIŞ PAKETLERİ", ""]
+    for key, p in PLAN_CATALOG.items():
+        lines.append(f"• {p['name']} ({key}) — {p['price']:,} TL/ay")
+        lines.append(f"  {p['channels']} kanal/grup • {p['team']} ekip kullanıcısı")
+    lines += ["", "Paket atama: /paketver MUSTERI_KODU starter|professional|vip GUN"]
+    await update.effective_message.reply_text("\n".join(lines))
+
+
+async def assign_package_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update): return
+    if len(context.args) != 3:
+        await update.effective_message.reply_text("Kullanım: /paketver MUSTERI_KODU starter|professional|vip GUN")
+        return
+    tenant_id, package = context.args[0].strip(), context.args[1].lower()
+    try:
+        days = int(context.args[2])
+        if package not in PLAN_CATALOG or not 1 <= days <= 3650: raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Paket starter, professional veya vip; süre 1–3650 gün olmalı.")
+        return
+    expires = now() + timedelta(days=days)
+    with connect() as c:
+        tenant = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not tenant:
+            await update.effective_message.reply_text("Müşteri bulunamadı.")
+            return
+        c.execute("UPDATE tenants SET plan_name=?,license_status='active',license_expires_at=?,status='active' WHERE tenant_id=?",
+                  (package, expires.isoformat(), tenant_id))
+    p = PLAN_CATALOG[package]
+    log_admin_action(update.effective_user.id, "Müşteri paketi atandı", None,
+                     f"{tenant_id}; {package}; {days} gün")
+    await update.effective_message.reply_text(
+        f"✅ PAKET ATANDI\nMüşteri: {tenant['tenant_name']}\nPaket: {p['name']} — {p['price']:,} TL/ay"
+        f"\nLimit: {p['channels']} kanal/grup, {p['team']} ekip kullanıcısı\nLisans bitişi: {expires:%d.%m.%Y %H:%M}"
+    )
 
 
 async def tenant_license_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3490,6 +3569,11 @@ async def customer_team_grant(update: Update, context: ContextTypes.DEFAULT_TYPE
         if target in ADMIN_IDS or target == uid:
             await update.effective_message.reply_text("Ana yöneticiye veya kendine ekip yetkisi veremezsin.")
             return
+        already_member = conn.execute("SELECT 1 FROM tenant_admins WHERE tenant_id=? AND user_id=? AND status='active'", (tid,target)).fetchone()
+        limit_error = None if already_member else plan_limit_message(tid, 'team')
+        if limit_error:
+            await update.effective_message.reply_text(limit_error)
+            return
         conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
             VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
             DO UPDATE SET status='active'""", (tid,target,role,cid,now().isoformat()))
@@ -3635,6 +3719,8 @@ def main():
     app.add_handler(CommandHandler('musteriler', list_tenants_command))
     app.add_handler(CommandHandler("lisansver", tenant_license_command))
     app.add_handler(CommandHandler("lisanslar", tenant_license_status))
+    app.add_handler(CommandHandler("paketler", package_list_command))
+    app.add_handler(CommandHandler("paketver", assign_package_command))
     app.add_handler(CommandHandler('musterisec', select_tenant_command))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
