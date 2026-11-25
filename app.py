@@ -669,11 +669,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
     elif q.data.startswith("tenantpanel:payadd:"):
         parts = q.data.split(":")
         try:
-            kind = parts[3]
-            if kind == "legacy" and len(parts) == 5:
-                member_id = int(parts[4]); channel_value = int(channel_id() or 0); tenant_key = "legacy_single"
-            elif kind == "tenant" and len(parts) == 6:
-                channel_value = int(parts[4]); member_id = int(parts[5])
+            kind = parts[2]
+            if kind == "legacy" and len(parts) == 4:
+                member_id = int(parts[3]); channel_value = int(channel_id() or 0); tenant_key = "legacy_single"
+            elif kind == "tenant" and len(parts) == 5:
+                channel_value = int(parts[3]); member_id = int(parts[4])
                 with connect() as conn:
                     tr = conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
                 if not tr: raise ValueError()
@@ -690,11 +690,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
     elif q.data.startswith("tenantpanel:payhistory:"):
         parts = q.data.split(":")
         try:
-            kind = parts[3]
-            if kind == "legacy" and len(parts) == 5:
-                member_id=int(parts[4]); tenant_key="legacy_single"; channel_value=int(channel_id() or 0)
-            elif kind == "tenant" and len(parts) == 6:
-                channel_value=int(parts[4]); member_id=int(parts[5])
+            kind = parts[2]
+            if kind == "legacy" and len(parts) == 4:
+                member_id=int(parts[3]); tenant_key="legacy_single"; channel_value=int(channel_id() or 0)
+            elif kind == "tenant" and len(parts) == 5:
+                channel_value=int(parts[3]); member_id=int(parts[4])
                 with connect() as conn:
                     tr=conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
                 if not tr: raise ValueError()
