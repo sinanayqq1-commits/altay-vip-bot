@@ -3,7 +3,7 @@ from urllib.parse import quote
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler
 )
@@ -446,16 +446,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Başvuru bağlantısı çözümlenemezse normal başlangıç ekranını göster.
             log.exception('VIP derin bağlantısı işlenemedi; normal /start menüsüne dönülüyor')
     exp = active_expiry(user.id)
-    if exp:
-        msg = f"Hoş geldin {user.first_name}! VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}"
-    else:
-        msg = f"ALTAY VIP BOT'e hoş geldin, {user.first_name}!\nVIP üyelik başvurusu için aşağıdaki butona bas."
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(" VIP Başvurusu", callback_data="apply")],
-        [InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status")],
-        [InlineKeyboardButton("🆘 Destek", callback_data="support")],
-    ])
-    await update.message.reply_text(msg, reply_markup=kb)
+    status_line = f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}" if exp else "Henüz aktif VIP üyeliğin yok."
+    msg = f"👑 GOLDEN VIP BOT'a hoş geldin, {user.first_name}!\n\nİşlemlerini aşağıdaki menüden kolayca yapabilirsin.\n{status_line}"
+    rows = [
+        [InlineKeyboardButton("🚀 BOTU BAŞLAT", callback_data="home:start")],
+        [InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
+        [InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
+         InlineKeyboardButton("🆘 Destek", callback_data="support")]
+    ]
+    if can_open_admin_panel(user.id):
+        rows.append([InlineKeyboardButton("🛡 Yönetim Panelini Aç", callback_data="home:admin")])
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def approve(context, uid, days=30):
@@ -492,6 +493,38 @@ async def approve(context, uid, days=30):
                     (uid, int(channel_id()), sent.message_id, inv.invite_link))
     except Exception:
         log.exception("Kullanıcıya mesaj gönderilemedi")
+
+
+async def home_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    if q.data == "home:start":
+        exp = active_expiry(uid)
+        status_line = f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}" if exp else "Henüz aktif VIP üyeliğin yok."
+        rows = [
+            [InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
+            [InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
+             InlineKeyboardButton("🆘 Destek", callback_data="support")]
+        ]
+        if can_open_admin_panel(uid):
+            rows.append([InlineKeyboardButton("🛡 Yönetim Panelini Aç", callback_data="home:admin")])
+        await q.message.reply_text(
+            f"👑 GOLDEN VIP BOT — ANA MENÜ\n\nHoş geldin {q.from_user.first_name}!\n{status_line}\n\nBir işlem seç:",
+            reply_markup=InlineKeyboardMarkup(rows)
+        )
+    elif q.data == "home:admin":
+        if not can_open_admin_panel(uid):
+            await q.answer("Bu panel için yönetici yetkin bulunmuyor.", show_alert=True)
+            return
+        if admin(uid):
+            await q.message.reply_text("🛠 GOLDEN VIP BOT — ANA YÖNETİCİ PANELİ", reply_markup=admin_panel_keyboard())
+        else:
+            tid = current_tenant_id(uid, context)
+            if not tid:
+                await q.message.reply_text("Birden fazla müşteride yetkin var. /musterisec komutuyla müşteri seç.")
+                return
+            await q.message.reply_text("🏢 MÜŞTERİ YÖNETİM PANELİ", reply_markup=tenant_panel_keyboard())
 
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2486,6 +2519,13 @@ async def application_error_handler(update: object, context: ContextTypes.DEFAUL
 
 
 async def post_init(app):
+    await app.bot.set_my_commands([
+        BotCommand("start", "Botu başlat / ana menü"),
+        BotCommand("admin", "Yönetim panelini aç"),
+        BotCommand("uyeler", "VIP üyelerini görüntüle"),
+        BotCommand("ekip", "Ekip yetkilerini görüntüle"),
+        BotCommand("kimim", "Telegram kullanıcı bilgilerim"),
+    ])
     with connect() as c:
         rows = c.execute(
             "SELECT job_id,run_at,message FROM posts WHERE status='pending'"
@@ -3439,6 +3479,7 @@ def main():
     app.add_handler(CommandHandler("otomatikduyurusil", recurring_announcement_delete))
     app.add_handler(CommandHandler("karsilama", set_welcome_message))
     app.add_handler(CommandHandler("uyegecmis", user_history_command))
+    app.add_handler(CallbackQueryHandler(home_callbacks, pattern=r"^home:"))
     app.add_handler(CallbackQueryHandler(team_role_callback, pattern=r"^teamrole:"))
     app.add_handler(CallbackQueryHandler(tenant_panel_callbacks, pattern=r"^tenantpanel:"))
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r"^(approve|reject):"))
