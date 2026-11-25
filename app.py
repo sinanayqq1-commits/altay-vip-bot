@@ -1586,43 +1586,68 @@ async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
             log_admin_action(0, "Otomatik duyuru gönderimi", None, f"tenant={row['tenant_id']}; #{row['announcement_id']}; {sent} kanal")
 
 async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
-    """Send a tenant-isolated VIP invitation to every registered customer chat."""
+    """Send each tenant's own configurable promo at its chosen interval."""
     with connect() as c:
         groups = c.execute("""SELECT channel_id,tenant_id,channel_name FROM tenant_channels
             WHERE channel_type='chat' AND status='active'
             ORDER BY tenant_id,channel_id""").fetchall()
     if not groups:
-        log.info("Kayıtlı müşteri sohbet grubu yok; VIP tanıtımı atlandı.")
         return
     bot_username = (await context.bot.get_me()).username
     if not bot_username:
         log.warning("Bot kullanıcı adı alınamadı; grup tanıtımı atlandı.")
         return
+    current = now()
     for group in groups:
         group_id = int(group["channel_id"])
+        tenant_id = group["tenant_id"]
         try:
             with connect() as c:
-                tenant = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=? AND status='active'",
-                                   (group["tenant_id"],)).fetchone()
-            if not tenant:
+                tenant = c.execute("SELECT tenant_name,status FROM tenants WHERE tenant_id=?",
+                                   (tenant_id,)).fetchone()
+                settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+                    "SELECT setting_key,setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key LIKE 'promo_%'",
+                    (tenant_id,)).fetchall()}
+            if not tenant or tenant["status"] != "active" or settings.get("promo_enabled", "1") != "1":
                 continue
+            try:
+                interval = int(settings.get("promo_interval_hours", "3"))
+            except ValueError:
+                interval = 3
+            interval = interval if interval in (1, 3, 6, 12, 24) else 3
+            last_sent = settings.get("promo_last_sent_at")
+            if last_sent:
+                try:
+                    elapsed = (current - datetime.fromisoformat(last_sent)).total_seconds()
+                    if elapsed < interval * 3600:
+                        continue
+                except ValueError:
+                    pass
             brand = (tenant["tenant_name"] or "VIP").strip()[:60]
-            text = (
+            promo_text = settings.get("promo_text") or (
                 f"👑 {brand} | VIP ÜYELİK\n\n"
                 "⚽ Özel içerikler ve düzenli paylaşımlar\n"
                 "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\n\n"
                 "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
             )
+            button_text = settings.get("promo_button") or "💎 VIP başvurusu"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "💎 VIP başvurusu",
-                url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+                button_text[:60], url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
             )]])
-            await context.bot.send_message(chat_id=group_id, text=text, reply_markup=kb)
-            log.info("Müşteri VIP tanıtımı gönderildi: tenant=%s group=%s", group["tenant_id"], group_id)
+            photo_id = settings.get("promo_photo_file_id")
+            if photo_id:
+                await context.bot.send_photo(chat_id=group_id, photo=photo_id,
+                                              caption=promo_text[:1024], reply_markup=kb)
+            else:
+                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], reply_markup=kb)
+            with connect() as c:
+                c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+                    VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+                    setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+                    (tenant_id, "promo_last_sent_at", current.isoformat(), current.isoformat()))
+            log.info("Müşteri VIP tanıtımı gönderildi: tenant=%s group=%s", tenant_id, group_id)
         except Exception:
-            log.exception("Müşteri VIP tanıtımı gönderilemedi: tenant=%s group=%s",
-                          group["tenant_id"], group_id)
-
+            log.exception("Müşteri VIP tanıtımı gönderilemedi: tenant=%s group=%s", tenant_id, group_id)
 
 async def send_membership_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Send each 3-day and 1-day expiry reminder once; preserve all membership rows."""
@@ -1765,7 +1790,7 @@ async def post_init(app):
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
     app.job_queue.run_repeating(send_membership_reminders, interval=21600, first=60, name="membership-reminders")
     app.job_queue.run_repeating(send_recurring_announcements, interval=60, first=10, name="recurring-announcements")
-    app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=0, name="golden-group-promo")
+    app.job_queue.run_repeating(send_golden_group_promo, interval=60, first=10, name="golden-group-promo")
     app.job_queue.run_daily(create_database_backup, time=datetime.strptime("03:00", "%H:%M").time().replace(tzinfo=TZ), days=(0,), name="weekly-database-backup")
 
 
@@ -2177,6 +2202,84 @@ async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (tenant_id, 'site_photo_file_id', file_id, now().isoformat()))
     await msg.reply_text('✅ SITE tanıtım görseli kaydedildi. Bundan sonra SITE veya SİTE yazıldığında görsel ve bağlantı butonları birlikte paylaşılacak.')
 
+
+async def promo_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_has_permission(uid, tid, None, "settings"):
+        await update.effective_message.reply_text("Tanıtım ayarları için yetkin bulunmuyor."); return
+    with connect() as c:
+        settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+            "SELECT setting_key,setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key LIKE 'promo_%'",
+            (tid,)).fetchall()}
+    enabled = settings.get("promo_enabled", "1") == "1"
+    await update.effective_message.reply_text(
+        "📣 OTOMATİK VIP TANITIM AYARLARI\n"
+        f"Durum: {'Açık' if enabled else 'Kapalı'}\n"
+        f"Gönderim aralığı: {settings.get('promo_interval_hours','3')} saat\n"
+        f"Buton: {settings.get('promo_button','💎 VIP başvurusu')}\n"
+        f"Özel metin: {'Var' if settings.get('promo_text') else 'Varsayılan'}\n"
+        f"Görsel: {'Var' if settings.get('promo_photo_file_id') else 'Yok'}\n\n"
+        "Komutlar:\n/tanitimmetin METİN\n/tanitimbuton BUTON YAZISI\n"
+        "/tanitimsure 1|3|6|12|24\n/tanitimfoto (sonra fotoğraf gönder)\n"
+        "/tanitimac veya /tanitimkapat"
+    )
+
+async def set_promo_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_has_permission(uid, tid, None, "settings"):
+        await update.effective_message.reply_text("Tanıtım ayarları için yetkin bulunmuyor."); return
+    command = update.effective_message.text.split()[0].split("@")[0].lower()
+    raw = update.effective_message.text.partition(" ")[2].strip()
+    if command == "/tanitimmetin":
+        if not raw or len(raw) > 3500:
+            await update.effective_message.reply_text("Metin 1–3500 karakter olmalı. Kullanım: /tanitimmetin Tanıtım metni"); return
+        key, value, reply = "promo_text", raw, "✅ Tanıtım metni kaydedildi."
+    elif command == "/tanitimbuton":
+        if not raw or len(raw) > 60:
+            await update.effective_message.reply_text("Buton yazısı 1–60 karakter olmalı."); return
+        key, value, reply = "promo_button", raw, "✅ VIP başvuru butonu yazısı kaydedildi."
+    elif command == "/tanitimsure":
+        if raw not in ("1", "3", "6", "12", "24"):
+            await update.effective_message.reply_text("Aralık 1, 3, 6, 12 veya 24 saat olabilir."); return
+        key, value, reply = "promo_interval_hours", raw, f"✅ Tanıtım her {raw} saatte bir gönderilecek."
+    elif command == "/tanitimac":
+        key, value, reply = "promo_enabled", "1", "✅ Otomatik tanıtım açıldı."
+    else:
+        key, value, reply = "promo_enabled", "0", "⏸ Otomatik tanıtım kapatıldı."
+    with connect() as c:
+        c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+            VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+            setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+            (tid, key, value, now().isoformat()))
+    await update.effective_message.reply_text(reply)
+
+async def request_promo_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_has_permission(uid, tid, None, "settings"):
+        await update.effective_message.reply_text("Tanıtım görseli ayarlama yetkin yok."); return
+    context.user_data["awaiting_promo_photo"] = True
+    await update.effective_message.reply_text("Şimdi otomatik VIP tanıtımında kullanılacak fotoğrafı gönder.")
+
+async def save_promo_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg, user = update.effective_message, update.effective_user
+    if not msg or not user or not msg.photo or not context.user_data.get("awaiting_promo_photo"):
+        return
+    tid = current_tenant_id(user.id, context)
+    if not tid or not manager_has_permission(user.id, tid, None, "settings"):
+        context.user_data.pop("awaiting_promo_photo", None)
+        await msg.reply_text("Bu müşteri için tanıtım görseli yetkin yok."); return
+    with connect() as c:
+        c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+            VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+            setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+            (tid, "promo_photo_file_id", msg.photo[-1].file_id, now().isoformat()))
+    context.user_data.pop("awaiting_promo_photo", None)
+    await msg.reply_text("✅ Otomatik VIP tanıtım görseli kaydedildi.")
+
+
 async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if update.effective_chat.type != 'private':
@@ -2458,6 +2561,14 @@ def main():
     app.add_handler(CommandHandler("linkekle", add_link))
     app.add_handler(CommandHandler("destekekle", add_support))
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
+    app.add_handler(CommandHandler("tanitimayar", promo_settings))
+    app.add_handler(CommandHandler("tanitimmetin", set_promo_setting))
+    app.add_handler(CommandHandler("tanitimbuton", set_promo_setting))
+    app.add_handler(CommandHandler("tanitimsure", set_promo_setting))
+    app.add_handler(CommandHandler("tanitimac", set_promo_setting))
+    app.add_handler(CommandHandler("tanitimkapat", set_promo_setting))
+    app.add_handler(CommandHandler("tanitimfoto", request_promo_photo))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_promo_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, payment_input_router))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
