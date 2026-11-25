@@ -703,16 +703,16 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     with connect() as c:
+        vip_channels = [int(r[0]) for r in c.execute(
+            "SELECT channel_id FROM tenant_memberships WHERE user_id=? AND status='active'",
+            (uid,)
+        ).fetchall()]
         legacy_cur = c.execute(
             "UPDATE memberships SET status='revoked' WHERE user_id=? AND status='active'", (uid,)
         )
         tenant_cur = c.execute(
             "UPDATE tenant_memberships SET status='revoked' WHERE user_id=? AND status='active'", (uid,)
         )
-        vip_channels = [int(r[0]) for r in c.execute(
-            "SELECT channel_id FROM tenant_memberships WHERE user_id=? UNION SELECT channel_id FROM tenant_channels WHERE channel_type='vip' AND status='active'",
-            (uid,)
-        ).fetchall()]
     removed_count = 0
     targets = set(vip_channels)
     try:
@@ -736,7 +736,7 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    if cur.rowcount:
+    if changed_count:
         result = "Üyelik iptal edildi."
     else:
         result = "Aktif üyelik kaydı bulunamadı; yine de kanaldan çıkarma denendi."
