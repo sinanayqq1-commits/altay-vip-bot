@@ -1,8 +1,4 @@
-import os, l
-        c.execute("""CREATE TABLE IF NOT EXISTS admin_audit_log(
-            audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            actor_id INTEGER NOT NULL, action TEXT NOT NULL,
-            target_user_id INTEGER, details TEXT, created_at TEXT NOT NULL)""")ogging, sqlite3
+import os, logging, sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -87,6 +83,10 @@ def init_db():
             channel_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL,
             amount REAL NOT NULL, note TEXT, paid_at TEXT NOT NULL,
             recorded_by INTEGER NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS admin_audit_log(
+            audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id INTEGER NOT NULL, action TEXT NOT NULL,
+            target_user_id INTEGER, details TEXT, created_at TEXT NOT NULL)""")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
