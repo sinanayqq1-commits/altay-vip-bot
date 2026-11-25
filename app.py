@@ -14,6 +14,27 @@ TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Istanbul"))
 DB = os.getenv("DB_PATH", "altay_vip.sqlite3")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+class SecretRedactionFilter(logging.Filter):
+    """Remove the Telegram bot token from every emitted log record."""
+    def filter(self, record):
+        try:
+            message = record.getMessage()
+            if TOKEN and TOKEN in message:
+                record.msg = message.replace(TOKEN, "[REDACTED_BOT_TOKEN]")
+                record.args = ()
+        except Exception:
+            pass
+        return True
+
+
+# python-telegram-bot uses HTTPX; its INFO request logs include the full API URL.
+# Keep those request details out of logs and redact the token as a second safeguard.
+for handler in logging.getLogger().handlers:
+    handler.addFilter(SecretRedactionFilter())
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 log = logging.getLogger("altay-vip-bot")
 
 
