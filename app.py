@@ -1,4 +1,5 @@
 import os, logging, sqlite3, secrets
+from urllib.parse import quote
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -685,10 +686,11 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             if not bot_username:
                 raise ValueError("Bot kullanıcı adı bulunamadı.")
             invite_url = f"https://t.me/{bot_username}?start=team_{token}"
+            share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('GOLDEN CLUB ekip daveti', safe='')}"
             await q.edit_message_text(
-                f"🔗 EKİP DAVETİ HAZIR\n\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nBu bağlantıyı eklemek istediğin kişiye gönder. Kişi bağlantıyı açıp botu başlattığında Telegram hesabı otomatik tanınacak. Ardından görevini sen seçeceksin.",
+                f"🔗 EKİP DAVETİ HAZIR\n\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nAşağıdaki paylaş butonuyla Telegram'da kişiyi seçip gönder. İstersen bağlantıyı kopyalayıp kendin de iletebilirsin:\n{invite_url}\n\nKişi bağlantıyı açıp botu başlattığında Telegram hesabı otomatik tanınacak. Ardından görevini sen seçeceksin.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('📨 Davet bağlantısını gönder', url=invite_url)],
+                    [InlineKeyboardButton('📨 Telegram ile paylaş', url=share_url)],
                     [InlineKeyboardButton('🛡 Ekip yönetimine dön', callback_data='tenantpanel:team')]
                 ])
             )
@@ -1139,10 +1141,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Bot kullanıcı adı alınamadı.", show_alert=True)
             return
         invite_url = f"https://t.me/{bot_username}?start=team_{token}"
+        share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('GOLDEN CLUB ekip daveti', safe='')}"
         await q.edit_message_text(
-            f"🔗 EKİP DAVETİ HAZIR\n\nMüşteri: {tenant_key}\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nBağlantıyı eklemek istediğin kişiye gönder. Kişi botu başlattığında hesabı otomatik tanınacak; ardından rolünü seçeceksin.",
+            f"🔗 EKİP DAVETİ HAZIR\n\nMüşteri: {tenant_key}\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nAşağıdaki paylaş butonuyla Telegram'da kişiyi seçip gönder. İstersen bağlantıyı kopyalayıp kendin de iletebilirsin:\n{invite_url}\n\nKişi bağlantıyı açıp botu başlattığında hesabı otomatik tanınacak; ardından rolünü seçeceksin.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📨 Davet bağlantısını gönder", url=invite_url)],
+                [InlineKeyboardButton("📨 Telegram ile paylaş", url=share_url)],
                 [InlineKeyboardButton("⬅️ Müşteri ekibine dön", callback_data=f"tenantpanel:admintenant:{tenant_key}")]
             ])
         )
