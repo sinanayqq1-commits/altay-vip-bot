@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler, MessageHandler, filters
 )
 
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
