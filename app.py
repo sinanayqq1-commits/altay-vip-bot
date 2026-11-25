@@ -690,25 +690,46 @@ async def extend_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Geçerli kullanıcı ID'si ve 1–3650 arası gün gir.")
         return
 
+    current = now()
+    updated = []
     with connect() as c:
-        row = c.execute(
+        legacy = c.execute(
             "SELECT expires_at FROM memberships WHERE user_id=? AND status='active'", (uid,)
         ).fetchone()
-        base = datetime.fromisoformat(row[0]) if row else now()
-        if base < now():
-            base = now()
-        until = base + timedelta(days=days)
-        c.execute("""INSERT INTO memberships(user_id,expires_at,status) VALUES(?,?,'active')
-        ON CONFLICT(user_id) DO UPDATE SET expires_at=excluded.expires_at,status='active'""",
-        (uid, until.isoformat()))
+        if legacy:
+            base = datetime.fromisoformat(legacy["expires_at"])
+            until = max(base, current) + timedelta(days=days)
+            c.execute("UPDATE memberships SET expires_at=? WHERE user_id=? AND status='active'",
+                      (until.isoformat(), uid))
+            updated.append(("GOLDEN VIP", until))
+        tenant_rows = c.execute(
+            """SELECT tenant_id,channel_id,expires_at FROM tenant_memberships
+               WHERE user_id=? AND status='active'""", (uid,)
+        ).fetchall()
+        for row in tenant_rows:
+            base = datetime.fromisoformat(row["expires_at"])
+            until = max(base, current) + timedelta(days=days)
+            c.execute("""UPDATE tenant_memberships SET expires_at=?
+                         WHERE tenant_id=? AND channel_id=? AND user_id=? AND status='active'""",
+                      (until.isoformat(), row["tenant_id"], row["channel_id"], uid))
+            channel = c.execute(
+                "SELECT channel_name FROM tenant_channels WHERE channel_id=?",
+                (row["channel_id"],)
+            ).fetchone()
+            updated.append((channel["channel_name"] if channel else row["tenant_id"], until))
+    if not updated:
+        await update.message.reply_text("Bu kullanıcı için uzatılabilecek aktif VIP üyeliği bulunamadı. Yeni üyelik vermek için /onayla kullan.")
+        return
     try:
+        detail = "\\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
         await context.bot.send_message(
-            uid, f"🎉 VIP üyeliğin {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}"
+            uid, f"🎉 VIP üyeliklerin {days} gün uzatıldı.\\nYeni bitiş tarihleri:\\n{detail}"
         )
     except Exception:
-        pass
+        log.info("Üyelik uzatma bildirimi gönderilemedi: %s", uid)
+    detail = "\\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
     await update.message.reply_text(
-        f"{uid} kullanıcısının üyeliği {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}"
+        f"{uid} kullanıcısının {len(updated)} VIP üyeliği {days} gün uzatıldı.\\n{detail}"
     )
 
 
