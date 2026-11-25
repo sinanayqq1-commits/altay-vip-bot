@@ -538,7 +538,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 WHERE status='active' AND expires_at>? ORDER BY expires_at LIMIT 25
             """, (current,)).fetchall()
             tenant_rows = c.execute("""
-                SELECT tm.user_id,tm.username,tm.expires_at,t.tenant_name,tc.channel_name
+                SELECT tm.user_id,tm.username,tm.expires_at,tm.channel_id,t.tenant_name,tc.channel_name
                 FROM tenant_memberships tm
                 LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
                 LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
@@ -550,19 +550,86 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             expired_tenant = c.execute("""
                 SELECT COUNT(*) FROM tenant_memberships WHERE status='expired'
             """).fetchone()[0]
-        lines = ["👥 AKTİF VIP ÜYELER"]
+        lines = ["👥 AKTİF VIP ÜYELER", "Detayını görmek için bir üyeye dokun:"]
+        member_buttons = []
         for r in legacy_rows:
             dt = datetime.fromisoformat(r["expires_at"])
             lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
             lines.append(f"  Eski ana kanal — bitiş {dt:%d.%m.%Y %H:%M}")
+            member_buttons.append([InlineKeyboardButton(f"👤 {r['username'] or r['user_id']} — GOLDEN VIP", callback_data=f"tenantpanel:memberdetail:legacy:{r['user_id']}")])
         for r in tenant_rows:
             dt = datetime.fromisoformat(r["expires_at"])
             lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
             lines.append(f"  {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'Kanal'} — bitiş {dt:%d.%m.%Y %H:%M}")
+            member_buttons.append([InlineKeyboardButton(f"👤 {r['username'] or r['user_id']} — {r['channel_name'] or 'VIP'}", callback_data=f"tenantpanel:memberdetail:tenant:{r['channel_id']}:{r['user_id']}")])
         if not legacy_rows and not tenant_rows:
             lines.append("Aktif VIP üye bulunmuyor.")
         lines += ["", f"📦 Süresi dolmuş kayıt: {expired_legacy + expired_tenant}"]
-        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        keyboard = member_buttons[:25] + [[InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]]
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+    elif q.data.startswith("tenantpanel:memberdetail:"):
+        parts = q.data.split(":")
+        if len(parts) == 4 and parts[2] == "legacy":
+            member_id = int(parts[3])
+            with connect() as conn:
+                row = conn.execute("""
+                    SELECT m.user_id,m.username,m.expires_at,m.status,a.full_name
+                    FROM memberships m LEFT JOIN applications a ON a.user_id=m.user_id
+                    WHERE m.user_id=?
+                """, (member_id,)).fetchone()
+            if not row:
+                await q.edit_message_text("Üyelik kaydı bulunamadı.", reply_markup=admin_panel_keyboard())
+                return
+            expiry = datetime.fromisoformat(row["expires_at"])
+            remaining = (expiry.date() - now().date()).days
+            username = f"@{row['username']}" if row["username"] else "Kayıtlı değil"
+            detail_text = (
+                "👤 VIP ÜYE DETAYI\\n\\n"
+                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\\n"
+                f"Kullanıcı adı: {username}\\nTelegram ID: {row['user_id']}\\n"
+                f"Üyelik: GOLDEN VIP (ana kanal)\\nDurum: {row['status']}\\n"
+                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\\nKalan süre: {max(0, remaining)} gün"
+            )
+        elif len(parts) == 5 and parts[2] == "tenant":
+            channel_value = int(parts[3])
+            member_id = int(parts[4])
+            with connect() as conn:
+                row = conn.execute("""
+                    SELECT tm.user_id,tm.username,tm.expires_at,tm.status,
+                           t.tenant_name,tc.channel_name,
+                           (SELECT ta.full_name FROM tenant_applications ta
+                            WHERE ta.tenant_id=tm.tenant_id AND ta.channel_id=tm.channel_id
+                              AND ta.user_id=tm.user_id
+                            ORDER BY ta.application_id DESC LIMIT 1) AS full_name
+                    FROM tenant_memberships tm
+                    LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
+                    LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+                    WHERE tm.channel_id=? AND tm.user_id=?
+                """, (channel_value, member_id)).fetchone()
+            if not row:
+                await q.edit_message_text("Üyelik kaydı bulunamadı.", reply_markup=admin_panel_keyboard())
+                return
+            expiry = datetime.fromisoformat(row["expires_at"])
+            remaining = (expiry.date() - now().date()).days
+            username = f"@{row['username']}" if row["username"] else "Kayıtlı değil"
+            detail_text = (
+                "👤 VIP ÜYE DETAYI\\n\\n"
+                f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\\n"
+                f"Kullanıcı adı: {username}\\nTelegram ID: {row['user_id']}\\n"
+                f"Müşteri: {row['tenant_name'] or 'Kayıtlı değil'}\\n"
+                f"Kanal: {row['channel_name'] or 'Kayıtlı değil'}\\nDurum: {row['status']}\\n"
+                f"Bitiş: {expiry:%d.%m.%Y %H:%M}\\nKalan süre: {max(0, remaining)} gün"
+            )
+        else:
+            await q.answer("Geçersiz üye kaydı.", show_alert=True)
+            return
+        detail_text += "\\n\\nNot: Üyelik başlangıç tarihi mevcut veritabanında tutulmuyor."
+        await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
+            [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
+        ]))
 
     elif q.data == "tenantpanel:expiring":
         current_dt = now()
