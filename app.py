@@ -589,7 +589,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             remaining = max(0, (expiry.date() - current_dt.date()).days)
             username = f"@{r['username']}" if r["username"] else "kullanıcı adı yok"
             lines.append(
-                f"• ID: {r['user_id']} | {username}\\n"
+                f"• ID: {r['user_id']} | {username}\n"
                 f"  GOLDEN VIP — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
             )
         for r in tenant_rows:
@@ -597,13 +597,13 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             remaining = max(0, (expiry.date() - current_dt.date()).days)
             username = f"@{r['username']}" if r["username"] else "kullanıcı adı yok"
             lines.append(
-                f"• ID: {r['user_id']} | {username}\\n"
+                f"• ID: {r['user_id']} | {username}\n"
                 f"  {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'VIP kanal'}"
                 f" — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
             )
         if not legacy_rows and not tenant_rows:
             lines.append("Önümüzdeki 7 gün içinde bitecek aktif üyelik yok.")
-        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:pending":
         with connect() as c:
