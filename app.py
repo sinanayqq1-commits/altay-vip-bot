@@ -173,9 +173,11 @@ def can_open_admin_panel(uid):
 
 def admin_panel_keyboard():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 VIP üyeler", callback_data="tenantpanel:members"),
+         InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
-        [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles")],
-        [InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
+        [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
+         InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
 
 
@@ -449,6 +451,70 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 for r in rows
             )
         await q.edit_message_text(text, reply_markup=admin_panel_keyboard())
+
+    elif q.data == "tenantpanel:members":
+        current = now().isoformat()
+        with connect() as c:
+            legacy_rows = c.execute("""
+                SELECT user_id,expires_at FROM memberships
+                WHERE status='active' AND expires_at>? ORDER BY expires_at LIMIT 25
+            """, (current,)).fetchall()
+            tenant_rows = c.execute("""
+                SELECT tm.user_id,tm.expires_at,t.tenant_name,tc.channel_name
+                FROM tenant_memberships tm
+                LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
+                LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+                WHERE tm.status='active' AND tm.expires_at>? ORDER BY tm.expires_at LIMIT 25
+            """, (current,)).fetchall()
+            expired_legacy = c.execute("""
+                SELECT COUNT(*) FROM memberships WHERE status='expired'
+            """).fetchone()[0]
+            expired_tenant = c.execute("""
+                SELECT COUNT(*) FROM tenant_memberships WHERE status='expired'
+            """).fetchone()[0]
+        lines = ["👥 AKTİF VIP ÜYELER"]
+        for r in legacy_rows:
+            dt = datetime.fromisoformat(r["expires_at"])
+            lines.append(f"• {r['user_id']} — Eski ana kanal — bitiş {dt:%d.%m.%Y %H:%M}")
+        for r in tenant_rows:
+            dt = datetime.fromisoformat(r["expires_at"])
+            lines.append(f"• {r['user_id']} — {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'Kanal'} — {dt:%d.%m.%Y %H:%M}")
+        if not legacy_rows and not tenant_rows:
+            lines.append("Aktif VIP üye bulunmuyor.")
+        lines += ["", f"📦 Süresi dolmuş kayıt: {expired_legacy + expired_tenant}"]
+        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+
+    elif q.data == "tenantpanel:pending":
+        with connect() as c:
+            legacy = c.execute("""
+                SELECT user_id,username,full_name,created_at FROM applications
+                WHERE status='pending' ORDER BY created_at LIMIT 15
+            """).fetchall()
+            tenant = c.execute("""
+                SELECT application_id,tenant_id,channel_id,user_id,username,full_name,created_at
+                FROM tenant_applications WHERE status='pending'
+                ORDER BY created_at LIMIT 15
+            """).fetchall()
+        lines = ["⏳ BEKLEYEN VIP BAŞVURULARI"]
+        keyboard = []
+        for r in legacy:
+            label = r["full_name"] or r["username"] or str(r["user_id"])
+            lines.append(f"• {label} — ID: {r['user_id']} (ana kanal)")
+            keyboard.append([
+                InlineKeyboardButton(f"✅ {r['user_id']} onayla", callback_data=f"approve:{r['user_id']}"),
+                InlineKeyboardButton("❌ Reddet", callback_data=f"reject:{r['user_id']}")
+            ])
+        for r in tenant:
+            label = r["full_name"] or r["username"] or str(r["user_id"])
+            lines.append(f"• {label} — ID: {r['user_id']} ({r['tenant_id']})")
+            keyboard.append([
+                InlineKeyboardButton(f"✅ {r['user_id']} onayla", callback_data=f"tenantapp:approve:{r['application_id']}"),
+                InlineKeyboardButton("❌ Reddet", callback_data=f"tenantapp:reject:{r['application_id']}")
+            ])
+        if not legacy and not tenant:
+            lines.append("Bekleyen başvuru yok.")
+        keyboard.append([InlineKeyboardButton("↩️ Yönetim paneli", callback_data="tenantpanel:status")])
+        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif q.data == "tenantpanel:status":
         with connect() as c:
