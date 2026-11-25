@@ -2720,6 +2720,85 @@ def tenant_manager_ids(tenant_id, channel_id_value=None):
     return {int(r[0]) for r in rows} | set(ADMIN_IDS)
 
 
+async def grant_tenant_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Grant a tenant VIP membership and send a single-use, expiring invite."""
+    uid = update.effective_user.id
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Bu komutu botla özel sohbetten kullan.")
+        return
+    if len(context.args) != 3:
+        await update.effective_message.reply_text(
+            "Kullanım: /vipver KANAL_ID KULLANICI_ID GÜN\nÖrnek: /vipver -1001234567890 123456789 30"
+        )
+        return
+    try:
+        channel_value, member_id, days = int(context.args[0]), int(context.args[1]), int(context.args[2])
+        if channel_value == 0 or member_id <= 0 or not 1 <= days <= 3650:
+            raise ValueError()
+    except ValueError:
+        await update.effective_message.reply_text("Kanal ID, kullanıcı ID veya gün sayısı geçersiz. Gün 1–3650 arasında olmalı.")
+        return
+
+    channel = tenant_for_channel(channel_value)
+    if not channel or channel["channel_type"] != "vip":
+        await update.effective_message.reply_text("Bu ID ile kayıtlı aktif bir VIP kanalı bulunamadı.")
+        return
+    tenant_id, channel_name = channel["tenant_id"], channel["channel_name"]
+    if not admin(uid) and (
+        not manager_can_access(uid, tenant_id, channel_value)
+        or not manager_has_permission(uid, tenant_id, channel_value, "members")
+    ):
+        await update.effective_message.reply_text("Bu VIP kanalına üye ekleme yetkin yok.")
+        return
+
+    current = now()
+    with connect() as c:
+        existing = c.execute("""SELECT expires_at,status FROM tenant_memberships
+            WHERE tenant_id=? AND channel_id=? AND user_id=?""",
+            (tenant_id, channel_value, member_id)).fetchone()
+    if existing and existing["status"] == "active" and datetime.fromisoformat(existing["expires_at"]) > current:
+        await update.effective_message.reply_text(
+            f"Bu kullanıcının üyeliği zaten aktif. Bitiş: {datetime.fromisoformat(existing['expires_at']):%d.%m.%Y %H:%M}\nSüre uzatmak için /uzat {member_id} {days} komutunu kullan."
+        )
+        return
+
+    expires = current + timedelta(days=days)
+    try:
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=channel_value, name=f"VIP-{member_id}", member_limit=1,
+            expire_date=current + timedelta(days=2)
+        )
+        sent = await context.bot.send_message(
+            member_id,
+            f"🎉 {channel_name} VIP üyeliğin tanımlandı!\nSüre: {days} gün\n"
+            f"Bitiş: {expires:%d.%m.%Y %H:%M}\n\n"
+            f"VIP kanalına tek kullanımlık katılım bağlantın (48 saat geçerli):\n{invite.invite_link}"
+        )
+    except Exception:
+        log.exception("Manuel VIP üyeliği için davet gönderilemedi: channel=%s user=%s", channel_value, member_id)
+        await update.effective_message.reply_text(
+            "❌ Davet oluşturulamadı veya kullanıcıya özel mesaj gönderilemedi. Kullanıcının önce botu başlatması ve botun kanalda davet oluşturma yetkisi olması gerekiyor."
+        )
+        return
+
+    with connect() as c:
+        c.execute("""INSERT INTO tenant_memberships
+            (tenant_id,channel_id,user_id,expires_at,status,username)
+            VALUES(?,?,?,?, 'active',?)
+            ON CONFLICT(tenant_id,channel_id,user_id) DO UPDATE SET
+            expires_at=excluded.expires_at,status='active',username=excluded.username""",
+            (tenant_id, channel_value, member_id, expires.isoformat(), ""))
+        c.execute("""INSERT OR REPLACE INTO vip_invite_messages
+            (user_id,chat_id,message_id,invite_link) VALUES(?,?,?,?)""",
+            (member_id, channel_value, sent.message_id, invite.invite_link))
+    log_admin_action(uid, "Manuel VIP üyeliği verildi", member_id,
+                     f"{days} gün; tenant={tenant_id}; kanal={channel_value}")
+    await update.effective_message.reply_text(
+        f"✅ VIP üyeliği tanımlandı.\nÜye: {member_id}\nKanal: {channel_name}\n"
+        f"Süre: {days} gün\nBitiş: {expires:%d.%m.%Y %H:%M}\nDavet tek kullanımlık ve 48 saat geçerli."
+    )
+
+
 async def tenant_application_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Approve or reject a 30-day application for the tenant VIP channel."""
     q = update.callback_query
@@ -3489,6 +3568,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex(r"^🚀 BAŞLAT / ANA MENÜ$"), start_menu_button))
     app.add_handler(CommandHandler("vip", vip_command))
+    app.add_handler(CommandHandler("vipver", grant_tenant_vip))
     app.add_handler(CommandHandler("kimim", whoami))
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
     app.add_handler(CommandHandler('musteriekle', create_tenant_command))
