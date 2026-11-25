@@ -1590,9 +1590,9 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
                 continue
             brand = (tenant["tenant_name"] or "VIP").strip()[:60]
             promo_text = settings.get("promo_text") or (
-                f"👑 {brand} | VIP ÜYELİK\\n\\n"
-                "⚽ Özel içerikler ve düzenli paylaşımlar\\n"
-                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\\n\\n"
+                f"👑 {brand} | VIP ÜYELİK\n\n"
+                "⚽ Özel içerikler ve düzenli paylaşımlar\n"
+                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\n\n"
                 "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
             )
             button_text = settings.get("promo_button") or "💎 VIP başvurusu"
@@ -1612,7 +1612,7 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
             log.warning("Test gönderim hata türü: %s", type(exc).__name__)
 
     await update.effective_message.reply_text(
-        f"🧪 Test gönderimi tamamlandı.\\nGönderilen: {sent} | Başarısız: {failed} | Atlanan: {skipped}"
+        f"🧪 Test gönderimi tamamlandı.\nGönderilen: {sent} | Başarısız: {failed} | Atlanan: {skipped}"
     )
 
 
