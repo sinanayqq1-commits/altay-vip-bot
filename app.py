@@ -667,6 +667,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         except (ValueError, IndexError, TypeError):
             await q.answer("Üyelik uzatılamadı; kayıt aktif olmayabilir.", show_alert=True)
             return
+        log_admin_action(uid, "Panelden üyelik uzatma", member_id, f"{days} gün; {label}")
         try:
             await context.bot.send_message(member_id, f"🎉 VIP üyeliğin {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}")
         except Exception:
@@ -1019,6 +1020,7 @@ async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Geçerli kullanıcı ID'si ve 1–3650 arası gün gir.")
         return
     await approve(context, uid, days)
+    log_admin_action(update.effective_user.id, "Üyelik tanımlama", uid, f"{days} gün")
     await update.message.reply_text(f"{uid} kullanıcısına {days} günlük üyelik tanımlandı.")
 
 
@@ -1066,6 +1068,7 @@ async def extend_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not updated:
         await update.message.reply_text("Bu kullanıcı için uzatılabilecek aktif VIP üyeliği bulunamadı. Yeni üyelik vermek için /onayla kullan.")
         return
+    log_admin_action(update.effective_user.id, "Üyelik uzatma", uid, f"{days} gün; {len(updated)} üyelik")
     try:
         detail = "\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
         await context.bot.send_message(
@@ -1123,6 +1126,7 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception("Kullanıcı VIP kanalından çıkarılamadı: %s / %s", target, uid)
     removed = removed_count > 0
     changed_count = legacy_cur.rowcount + tenant_cur.rowcount
+    log_admin_action(update.effective_user.id, "Üyelik iptali", uid, f"{changed_count} kayıt; kanaldan çıkarma denendi")
     for target in targets:
         await cleanup_vip_invite_message(context, uid, int(target))
 
@@ -1818,6 +1822,7 @@ async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYP
             VALUES(?,?,?,?,?,?,?,?)""",
             (pending["kind"],pending["tenant_id"],pending["channel_id"],pending["user_id"],
              amount,note,now().isoformat(),update.effective_user.id))
+    log_admin_action(update.effective_user.id, "Ödeme kaydı", pending["user_id"], f"{amount:.2f} TL; {note}")
     context.user_data.pop("pending_payment",None)
     await update.effective_message.reply_text(
         f"✅ Ödeme kaydedildi.\nÜye ID: {pending['user_id']}\nTutar: {amount:,.2f} TL"
