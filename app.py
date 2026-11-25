@@ -274,7 +274,8 @@ def tenant_panel_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('👥 Üyelerim', callback_data='tenantpanel:members'), InlineKeyboardButton('⏳ Başvurularım', callback_data='tenantpanel:pending')],
         [InlineKeyboardButton('📡 Kanallarım', callback_data='tenantpanel:channels'), InlineKeyboardButton('💳 Ödemelerim', callback_data='tenantpanel:payments')],
-        [InlineKeyboardButton('🔐 Yetkilerim', callback_data='tenantpanel:roles')]
+        [InlineKeyboardButton('🔐 Yetkilerim', callback_data='tenantpanel:roles')],
+        [InlineKeyboardButton('🛡 Ekip yönetimi', callback_data='tenantpanel:team')]
     ])
 
 
@@ -566,6 +567,99 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     if q.data == 'tenantpanel:home':
         await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
+
+    elif q.data == 'tenantpanel:team':
+        if not manager_has_permission(uid, tid, None, 'settings'):
+            await q.answer('Ekip yönetimi yetkin yok.', show_alert=True)
+            return
+        where, params = scoped_channel_filter(scope, "a.channel_id")
+        with connect() as c:
+            rows = c.execute("""SELECT a.user_id,a.role,a.channel_id,ch.channel_name
+                FROM tenant_admins a LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
+                WHERE a.tenant_id=? AND a.status='active'""" + where +
+                " ORDER BY ch.channel_name,a.user_id,a.role", (tid,) + params).fetchall()
+            channels = c.execute("SELECT channel_id,channel_name FROM tenant_channels WHERE tenant_id=? AND status='active'" +
+                scoped_channel_filter(scope, "channel_id")[0] + " ORDER BY channel_name",
+                (tid,) + scoped_channel_filter(scope, "channel_id")[1]).fetchall()
+        lines = ['🛡 EKİP YÖNETİMİ', '', 'Aktif ekip yetkilileri:']
+        buttons = []
+        for r in rows:
+            label = f"{r['user_id']} — {r['role']} — {r['channel_name'] or 'Genel'}"
+            lines.append("• " + label)
+            if r['role'] != 'owner' and r['channel_id'] is not None:
+                buttons.append([InlineKeyboardButton(f"❌ {r['user_id']} / {r['role']}", callback_data=f"tenantpanel:teamrevokeask:{r['channel_id']}:{r['user_id']}")])
+        if not rows:
+            lines.append('Henüz ekip yetkilisi eklenmemiş.')
+        lines += ['', 'Yeni yetkili eklemek için aşağıdaki butona bas.']
+        if channels:
+            buttons.insert(0, [InlineKeyboardButton('➕ Ekip üyesi ekle', callback_data='tenantpanel:teamadd')])
+        buttons.append([InlineKeyboardButton('⬅️ Ana panel', callback_data='tenantpanel:home')])
+        await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data == 'tenantpanel:teamadd':
+        if not manager_has_permission(uid, tid, None, 'settings'):
+            await q.answer('Ekip yönetimi yetkin yok.', show_alert=True)
+            return
+        context.user_data['pending_team_grant'] = {'tenant_id':tid,'created_by':uid,'scope':scope}
+        await q.edit_message_text(
+            '➕ EKİP ÜYESİ EKLE\\n\\nTelegram kullanıcı ID, rol ve kanal ID bilgilerini tek satırda gönder.\\n'
+            'Örnek: 123456789 moderator -1001234567890\\n\\n'
+            'Roller: moderator, finance, publisher. Manager yetkisini yalnızca müşteri sahibi verebilir.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Vazgeç', callback_data='tenantpanel:team')]])
+        )
+
+    elif q.data.startswith('tenantpanel:teamrevokeask:'):
+        try:
+            _, _, _, channel_value, target = q.data.split(':')
+            channel_value, target = int(channel_value), int(target)
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'settings'):
+                raise PermissionError()
+            with connect() as c:
+                roles = c.execute("""SELECT role FROM tenant_admins WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value)).fetchall()
+            if not roles or any(x['role']=='owner' for x in roles):
+                raise ValueError()
+        except PermissionError:
+            await q.answer('Bu kanalın ekibini yönetme yetkin yok.', show_alert=True)
+            return
+        except (ValueError, TypeError):
+            await q.answer('Aktif ekip kaydı bulunamadı.', show_alert=True)
+            return
+        await q.edit_message_text(
+            f'{target} kullanıcısının bu kanaldaki ekip yetkileri kaldırılacak. Onaylıyor musun?',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('Evet, yetkileri kaldır', callback_data=f'tenantpanel:teamrevoke:{channel_value}:{target}')],
+                [InlineKeyboardButton('Vazgeç', callback_data='tenantpanel:team')]
+            ])
+        )
+
+    elif q.data.startswith('tenantpanel:teamrevoke:'):
+        try:
+            _, _, _, channel_value, target = q.data.split(':')
+            channel_value, target = int(channel_value), int(target)
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'settings'):
+                raise PermissionError()
+            with connect() as c:
+                roles = c.execute("""SELECT role FROM tenant_admins WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value)).fetchall()
+                if not roles or any(x['role']=='owner' for x in roles):
+                    raise ValueError()
+                c.execute("""UPDATE tenant_admins SET status='inactive' WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value))
+            log_admin_action(uid, 'Müşteri panelinden ekip yetkisi kaldırıldı', target,
+                             f'tenant={tid}; kanal={channel_value}')
+            await q.edit_message_text('✅ Ekip yetkileri kaldırıldı.', reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('🛡 Ekip yönetimine dön', callback_data='tenantpanel:team')],
+                [InlineKeyboardButton('🏠 Ana panel', callback_data='tenantpanel:home')]
+            ]))
+        except PermissionError:
+            await q.answer('Bu kanalın ekibini yönetme yetkin yok.', show_alert=True)
+        except (ValueError, TypeError):
+            await q.answer('Ekip yetkisi kaldırılamadı.', show_alert=True)
 
     elif q.data == 'tenantpanel:roles':
         rows = [r for r in tenant_permissions(uid) if r['tenant_id'] == tid]
@@ -2404,6 +2498,44 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    team_pending = context.user_data.get("pending_team_grant")
+    if team_pending:
+        actor_id = update.effective_user.id
+        if team_pending.get("created_by") != actor_id:
+            context.user_data.pop("pending_team_grant", None)
+            await update.effective_message.reply_text("Bu ekip işlemi sana ait değil; iptal edildi.")
+            return
+        raw = (update.effective_message.text or "").strip().split()
+        try:
+            if len(raw) != 3:
+                raise ValueError()
+            target, role, cid = int(raw[0]), raw[1].lower(), int(raw[2])
+            if target <= 0 or cid == 0 or role not in ("manager", "moderator", "finance", "publisher") or target == actor_id or target in ADMIN_IDS:
+                raise ValueError()
+            tid = team_pending["tenant_id"]
+            scope = team_pending.get("scope")
+            if scope is not None and cid not in scope:
+                raise PermissionError()
+            if not manager_can_access(actor_id, tid, cid) or not manager_has_permission(actor_id, tid, cid, "settings"):
+                raise PermissionError()
+            with connect() as conn:
+                channel = conn.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tid,cid)).fetchone()
+                actor_roles = conn.execute("SELECT role,channel_id FROM tenant_admins WHERE tenant_id=? AND user_id=? AND status='active'", (tid,actor_id)).fetchall()
+                owner = any(r["role"]=="owner" and (r["channel_id"] is None or int(r["channel_id"])==cid) for r in actor_roles)
+                if not channel or (role == "manager" and not owner):
+                    raise PermissionError()
+                conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+                    VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
+                    DO UPDATE SET status='active'""", (tid,target,role,cid,now().isoformat()))
+            log_admin_action(actor_id, "Müşteri panelinden ekip yetkisi verildi", target, f"{role}; tenant={tid}; kanal={cid}")
+            context.user_data.pop("pending_team_grant", None)
+            await update.effective_message.reply_text(f"✅ {target} kullanıcısına {channel['channel_name']} kanalında {role} yetkisi verildi.")
+        except PermissionError:
+            await update.effective_message.reply_text("Bu kanal veya rol için yetkin yok. Manager yetkisini yalnızca müşteri sahibi verebilir.")
+        except (ValueError, IndexError, TypeError):
+            await update.effective_message.reply_text("Bilgiler geçersiz. Şu formatta gönder: KULLANICI_ID rol KANAL_ID")
+        return
+
     pending = context.user_data.get("pending_payment")
     if not pending:
         return
