@@ -445,23 +445,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Eski veya bozuk bir derin bağlantı /start ana menüsünü engellemesin.
             # Başvuru bağlantısı çözümlenemezse normal başlangıç ekranını göster.
             log.exception('VIP derin bağlantısı işlenemedi; normal /start menüsüne dönülüyor')
-    exp = active_expiry(user.id)
-    status_line = f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}" if exp else "Henüz aktif VIP üyeliğin yok."
-    msg = f"👑 GOLDEN VIP BOT'a hoş geldin, {user.first_name}!\n\nİşlemlerini aşağıdaki menüden kolayca yapabilirsin.\n{status_line}"
-    rows = [
-        [InlineKeyboardButton("🚀 BOTU BAŞLAT", callback_data="home:start")],
-        [InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
-        [InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
-         InlineKeyboardButton("🆘 Destek", callback_data="support")]
-    ]
-    if can_open_admin_panel(user.id):
-        rows.append([InlineKeyboardButton("🛡 Yönetim Panelini Aç", callback_data="home:admin")])
+    # Kullanıcı tipine göre birbirinden tamamen ayrı başlangıç menüleri.
     persistent_menu = ReplyKeyboardMarkup(
         [[KeyboardButton("🚀 BAŞLAT / ANA MENÜ")]],
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Menüyü açmak için butona dokun"
     )
+    if admin(user.id):
+        msg = f"🛡 GOLDEN VIP — ANA YÖNETİCİ\\n\\nHoş geldin {user.first_name}!\\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
+        rows = [[InlineKeyboardButton("🛠 Ana Yönetim Panelini Aç", callback_data="home:admin")]]
+    elif tenant_permissions(user.id):
+        permissions = tenant_permissions(user.id)
+        customer_names = list(dict.fromkeys(str(r["tenant_name"]) for r in permissions))
+        msg = (f"🏢 MÜŞTERİ YÖNETİM ALANI\\n\\nHoş geldin {user.first_name}!\\n"
+               f"Müşteri: {', '.join(customer_names)}\\n\\nYalnızca yetkili olduğun müşteri ve kanalları yönetebilirsin.")
+        rows = [[InlineKeyboardButton("🏢 Müşteri Panelimi Aç", callback_data="home:admin")]]
+    else:
+        exp = active_expiry(user.id)
+        if not exp:
+            with connect() as c:
+                tenant_exp = c.execute("""SELECT MAX(expires_at) AS expires_at
+                    FROM tenant_memberships WHERE user_id=? AND status='active'""", (user.id,)).fetchone()
+            if tenant_exp and tenant_exp["expires_at"]:
+                candidate = datetime.fromisoformat(tenant_exp["expires_at"])
+                exp = candidate if candidate > now() else None
+        if exp:
+            msg = (f"💎 GOLDEN VIP ÜYE ALANI\\n\\nHoş geldin {user.first_name}!\\n"
+                   f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}\\n\\nÜyelik bilgilerini ve desteği buradan takip edebilirsin.")
+            rows = [[InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
+                     InlineKeyboardButton("🆘 Destek", callback_data="support")]]
+        else:
+            msg = (f"👑 GOLDEN VIP'a hoş geldin, {user.first_name}!\\n\\n"
+                   "VIP üyeliğine başvurmak veya destek almak için aşağıdaki menüyü kullanabilirsin.")
+            rows = [[InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
+                    [InlineKeyboardButton("🆘 Destek", callback_data="support")]]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(rows))
     await update.message.reply_text("Ana menüye dönmek için aşağıdaki butonu kullanabilirsin.", reply_markup=persistent_menu)
 
