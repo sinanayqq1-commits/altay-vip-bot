@@ -11,6 +11,7 @@ from telegram.ext import (
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}
 CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip()
+MEDYAECAN_CUSTOMER_CHANNEL_ID = os.getenv("MEDYAECAN_CUSTOMER_CHANNEL_ID", "").strip()
 TZ = ZoneInfo(os.getenv("TIMEZONE", "Europe/Istanbul"))
 DB = os.getenv("DB_PATH", "altay_vip.sqlite3")
 
@@ -42,6 +43,45 @@ log = logging.getLogger("altay-vip-bot")
 
 def now():
     return datetime.now(TZ)
+
+
+async def send_customer_channel_invite(bot, tenant_id):
+    """Send a one-use MEDYAECAN customer-channel invite to the tenant owner."""
+    if not MEDYAECAN_CUSTOMER_CHANNEL_ID:
+        return "Kanal daveti gönderilmedi: MEDYAECAN_CUSTOMER_CHANNEL_ID ayarı yapılmamış."
+    try:
+        channel_id = int(MEDYAECAN_CUSTOMER_CHANNEL_ID)
+    except ValueError:
+        return "Kanal daveti gönderilmedi: kanal ID sayısal olmalı."
+    with connect() as conn:
+        owner = conn.execute(
+            """SELECT user_id FROM tenant_admins
+               WHERE tenant_id=? AND role='owner' AND status='active'
+               ORDER BY added_at LIMIT 1""",
+            (tenant_id,)
+        ).fetchone()
+    if not owner:
+        return "Kanal daveti gönderilmedi: müşteri sahibi Telegram hesabı bulunamadı."
+    try:
+        invite = await bot.create_chat_invite_link(
+            chat_id=channel_id,
+            name=f"MEDYAECAN-{tenant_id[:20]}",
+            member_limit=1,
+            expire_date=now() + timedelta(hours=48)
+        )
+        await bot.send_message(
+            chat_id=int(owner["user_id"]),
+            text=(
+                "🎉 MEDYAECAN yazılım satın alımınız onaylandı!\n\n"
+                "VIP müşteri kanalına özel katılım bağlantınız (tek kullanımlık, "
+                "48 saat geçerli):\n" + invite.invite_link
+            )
+        )
+        return "MEDYAECAN müşteri kanalının tek kullanımlık daveti müşteriye gönderildi."
+    except Exception:
+        log.exception("MEDYAECAN müşteri kanal daveti gönderilemedi: tenant=%s", tenant_id)
+        return ("Ödeme onaylandı ancak kanal daveti gönderilemedi. Botun MEDYAECAN "
+                "kanalında yönetici olduğunu ve müşterinin botu başlattığını kontrol et.")
 
 
 def connect():
@@ -1440,7 +1480,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             c.execute("UPDATE tenants SET plan_name=?,license_status='active',license_expires_at=?,status='active' WHERE tenant_id=?",(sale["package_name"],expires.isoformat(),sale["tenant_id"]))
             c.execute("UPDATE tenant_sales SET status='paid',paid_at=?,confirmed_by=? WHERE sale_id=?",(current.isoformat(),uid,sale_id))
         log_admin_action(uid,"Satış ödemesi onaylandı",None,f"#{sale_id}; {sale['tenant_id']}; {sale['amount']} TL")
-        await q.edit_message_text(f"✅ ÖDEME ONAYLANDI\n#{sale_id} — {tenant['tenant_name']}\n{sale['amount']:,.2f} TL\nLisans bitişi: {expires:%d.%m.%Y}",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Ödeme takibi",callback_data="tenantpanel:payments")],[InlineKeyboardButton("🏠 Ana panel",callback_data="tenantpanel:home")]]))
+        invite_status = await send_customer_channel_invite(context.bot, sale["tenant_id"])
+        await q.edit_message_text(f"✅ ÖDEME ONAYLANDI\n#{sale_id} — {tenant['tenant_name']}\n{sale['amount']:,.2f} TL\nLisans bitişi: {expires:%d.%m.%Y}\n\n📨 {invite_status}",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Ödeme takibi",callback_data="tenantpanel:payments")],[InlineKeyboardButton("🏠 Ana panel",callback_data="tenantpanel:home")]]))
 
     elif q.data == "tenantpanel:channels":
         if admin(uid):
@@ -2957,10 +2998,11 @@ async def confirm_sale_payment_command(update: Update, context: ContextTypes.DEF
                   (current.isoformat(), update.effective_user.id, sale_id))
     log_admin_action(update.effective_user.id, "Satış ödemesi onaylandı", None,
                      f"Satış #{sale_id}; {sale['tenant_id']}; {sale['amount']:.2f} TL")
+    invite_status = await send_customer_channel_invite(context.bot, sale["tenant_id"])
     await update.effective_message.reply_text(
         f"✅ ÖDEME ONAYLANDI\nSatış: #{sale_id}\nMüşteri: {tenant['tenant_name']}\n"
         f"Paket: {PLAN_CATALOG[sale['package_name']]['name']}\nTahsilat: {sale['amount']:,.2f} TL\n"
-        f"Lisans bitişi: {expires:%d.%m.%Y %H:%M}")
+        f"Lisans bitişi: {expires:%d.%m.%Y %H:%M}\n\n📨 {invite_status}")
 
 
 async def list_sales_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
