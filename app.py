@@ -532,6 +532,61 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def tenant_customer_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = q.from_user.id
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_can_access(uid, tid):
+        await q.answer('Müşteri erişimi bulunamadı.', show_alert=True); return
+    await q.answer()
+    if q.data == 'tenantpanel:home':
+        await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
+    elif q.data == 'tenantpanel:roles':
+        rows = [r for r in tenant_permissions(uid) if r['tenant_id'] == tid]
+        lines = ['YETKİLERİM'] + [f"• {r['role']} — {r['channel_name'] or 'Genel yetki'}" for r in rows]
+        await q.edit_message_text('\\n'.join(lines), reply_markup=tenant_panel_keyboard())
+    elif q.data == 'tenantpanel:channels':
+        with connect() as c:
+            rows = c.execute('SELECT channel_name,channel_id,channel_type FROM tenant_channels WHERE tenant_id=? AND status=\'active\'', (tid,)).fetchall()
+        lines = ['KANALLARIM'] + [f"• {r['channel_name']} — {r['channel_type']} (ID: {r['channel_id']})" for r in rows]
+        if not rows: lines.append('Henüz kanal kaydedilmemiş.')
+        await q.edit_message_text('\\n'.join(lines), reply_markup=tenant_panel_keyboard())
+    elif q.data == 'tenantpanel:members':
+        if not manager_has_permission(uid, tid, None, 'members'):
+            await q.answer('Üye görüntüleme yetkin yok.', show_alert=True); return
+        with connect() as c:
+            rows = c.execute('SELECT user_id,username,expires_at FROM tenant_memberships WHERE tenant_id=? AND status=\'active\' AND expires_at>? ORDER BY expires_at LIMIT 50', (tid,now().isoformat())).fetchall()
+        lines = ['AKTİF VIP ÜYELERİM']
+        for r in rows:
+            exp = datetime.fromisoformat(r['expires_at']); lines.append(f"• {r['username'] or r['user_id']} (ID: {r['user_id']}) — {exp:%d.%m.%Y}")
+        if not rows: lines.append('Aktif üye bulunmuyor.')
+        await q.edit_message_text('\\n'.join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+    elif q.data == 'tenantpanel:pending':
+        if not manager_has_permission(uid, tid, None, 'applications'):
+            await q.answer('Başvuru görüntüleme yetkin yok.', show_alert=True); return
+        with connect() as c:
+            rows = c.execute('SELECT application_id,user_id,username,full_name FROM tenant_applications WHERE tenant_id=? AND status=\'pending\' ORDER BY created_at LIMIT 20', (tid,)).fetchall()
+        lines = ['BEKLEYEN BAŞVURULARIM']; buttons = []
+        for r in rows:
+            lines.append(f"• {r['full_name'] or r['username'] or r['user_id']} — ID {r['user_id']}")
+            buttons.append([InlineKeyboardButton(f"Onayla {r['user_id']}", callback_data=f"tenantapp:approve:{r['application_id']}"), InlineKeyboardButton('Reddet', callback_data=f"tenantapp:reject:{r['application_id']}")])
+        if not rows: lines.append('Bekleyen başvuru yok.')
+        buttons.append([InlineKeyboardButton('Panel', callback_data='tenantpanel:home')])
+        await q.edit_message_text('\\n'.join(lines)[:3500], reply_markup=InlineKeyboardMarkup(buttons))
+    elif q.data == 'tenantpanel:payments':
+        if not manager_has_permission(uid, tid, None, 'payments'):
+            await q.answer('Ödeme görüntüleme yetkin yok.', show_alert=True); return
+        with connect() as c:
+            total = c.execute('SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments WHERE membership_type=\'tenant\' AND tenant_id=?', (tid,)).fetchone()
+            rows = c.execute('SELECT user_id,amount,note,paid_at FROM membership_payments WHERE membership_type=\'tenant\' AND tenant_id=? ORDER BY paid_at DESC LIMIT 20', (tid,)).fetchall()
+        lines = [f"ÖDEME RAPORU — {total[0]} kayıt / {total[1]:,.2f} TL"]
+        for r in rows:
+            when = datetime.fromisoformat(r['paid_at']); lines.append(f"• {r['user_id']} — {r['amount']:,.2f} TL — {when:%d.%m.%Y}")
+        await q.edit_message_text('\\n'.join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+    else:
+        await q.answer('Bu bölüm müşteri panelinde kullanılamıyor.', show_alert=True)
+
+
 async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
