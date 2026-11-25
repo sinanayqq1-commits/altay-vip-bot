@@ -943,7 +943,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             tenants = c.execute("SELECT tenant_id,tenant_name,status FROM tenants ORDER BY tenant_name").fetchall()
         buttons = [[InlineKeyboardButton(f"{t['tenant_name']} — {t['status']}", callback_data=f"tenantpanel:admintenant:{t['tenant_id']}")] for t in tenants]
         buttons.append([InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")])
-        await q.edit_message_text("🛡 MÜŞTERİ EKİP YÖNETİMİ\\n\\nEkiplerini yönetmek istediğin müşteriyi seç:", reply_markup=InlineKeyboardMarkup(buttons))
+        await q.edit_message_text("🛡 MÜŞTERİ EKİP YÖNETİMİ\n\nEkiplerini yönetmek istediğin müşteriyi seç:", reply_markup=InlineKeyboardMarkup(buttons))
 
     elif q.data.startswith("tenantpanel:admintenant:"):
         tenant_key = q.data.split(":", 2)[2]
