@@ -173,6 +173,8 @@ def init_db():
                         ON CONFLICT(tenant_id,user_id,role,channel_id)
                         DO UPDATE SET status='active'""",
                         (owner_id, legacy_channel, now().isoformat()))
+                c.execute("UPDATE tenant_channels SET channel_type='vip' WHERE channel_id=? AND tenant_id='legacy_single' AND channel_type='legacy'", (legacy_channel,))
+                c.execute("UPDATE tenant_channels SET tenant_id='legacy_single', channel_name='GOLDEN CLUB SOHBET' WHERE tenant_id='altay_demo' AND channel_type='chat' AND status='active'")
                 c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
@@ -900,6 +902,39 @@ async def expire_tenant_memberships(context: ContextTypes.DEFAULT_TYPE):
             log.info('Süre bitiş bildirimi kullanıcıya gönderilemedi: %s', row['user_id'])
 
 
+async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
+    """Send a recurring GOLDEN VIP invitation to the registered chat group."""
+    with connect() as c:
+        group = c.execute("""SELECT channel_id FROM tenant_channels
+            WHERE tenant_id='legacy_single' AND channel_type='chat' AND status='active'
+            ORDER BY channel_id LIMIT 1""").fetchone()
+    if not group:
+        log.info("GOLDEN VIP sohbet grubu kayıtlı değil; tanıtım atlandı.")
+        return
+    group_id = int(group["channel_id"])
+    try:
+        bot_username = (await context.bot.get_me()).username
+        if not bot_username:
+            log.warning("Bot kullanıcı adı alınamadı; grup tanıtımı atlandı.")
+            return
+        text = (
+            "👑 GOLDEN VIP | ÖZEL ANALİZ PLATFORMU\n\n"
+            "⚽ Futbol ve maç gündemine dair değerlendirmeler\n"
+            "📊 İstatistik odaklı karşılaşma analizleri\n"
+            "💎 VIP üyelerine özel içerikler ve düzenli paylaşımlar\n\n"
+            "VIP üyelik başvurusu için aşağıdaki butona dokun.\n"
+            "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "💎 GOLDEN VIP başvurusu",
+            url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+        )]])
+        await context.bot.send_message(chat_id=group_id, text=text, reply_markup=kb)
+        log.info("GOLDEN VIP grup tanıtımı gönderildi: %s", group_id)
+    except Exception:
+        log.exception("GOLDEN VIP grup tanıtımı gönderilemedi: %s", group_id)
+
+
 async def post_init(app):
     with connect() as c:
         rows = c.execute(
@@ -913,6 +948,7 @@ async def post_init(app):
         )
     app.job_queue.run_repeating(expire, interval=300, first=20, name="vip-expiry")
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
+    app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=10800, name="golden-group-promo")
 
 
 
@@ -970,12 +1006,14 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     with connect() as c:
-        c.execute("INSERT OR IGNORE INTO tenants(tenant_id,tenant_name,status,created_at) VALUES('altay_demo','ALTAY VIP','active',?)", (now().isoformat(),))
+        tenant_id = "legacy_single" if c.execute("SELECT 1 FROM tenants WHERE tenant_id='legacy_single' AND status='active'").fetchone() else "altay_demo"
+        tenant_name = "GOLDEN VIP" if tenant_id == "legacy_single" else "ALTAY VIP"
+        c.execute("INSERT OR IGNORE INTO tenants(tenant_id,tenant_name,status,created_at) VALUES(?,?, 'active',?)", (tenant_id, tenant_name, now().isoformat()))
         c.execute("""INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,'active') ON CONFLICT(channel_id) DO UPDATE SET
             tenant_id=excluded.tenant_id, channel_name=excluded.channel_name,
             channel_type=excluded.channel_type, owner_user_id=COALESCE(excluded.owner_user_id,tenant_channels.owner_user_id), status='active'""",
-            (target_chat.id, "altay_demo", names[role], "chat" if role == "sohbet" else role, user.id if user else None))
+            (target_chat.id, tenant_id, "GOLDEN CLUB SOHBET" if role == "sohbet" else names[role], "chat" if role == "sohbet" else role, user.id if user else None))
     await msg.reply_text(f"✅ {names[role]} kaydedildi.\nTelegram ID: {target_chat.id}\nBotun kanalda yönetici olduğundan emin ol.")
 
 
