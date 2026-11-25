@@ -2547,25 +2547,18 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
                 continue
             brand = (tenant["tenant_name"] or "MEDYAECAN").strip()[:60]
             promo_text = (
-                f"🧡 <b>{brand} | DİJİTAL YÖNETİM ÇÖZÜMLERİ</b>\n\n"
-                "🚀 İşinizi kolaylaştıran profesyonel Telegram botları ve yönetim panelleri!\n\n"
-                "🤖 Müşteri yönetimi\n"
-                "💎 VIP üyelik ve kanal yönetimi\n"
-                "👥 Ekip ve yetkilendirme sistemi\n"
-                "💳 Ödeme ve üyelik takibi\n"
-                "📢 Otomatik duyuru ve bildirimler\n\n"
-                "📦 <b>SATIŞ PAKETLERİMİZ</b>\n\n"
-                "🥉 <b>BAŞLANGIÇ — 499 TL / AY</b>\n"
-                "• 2 kanal/grup • 2 ekip kullanıcısı\n\n"
-                "🥈 <b>PROFESYONEL — 999 TL / AY</b>\n"
-                "• 5 kanal/grup • 5 ekip kullanıcısı\n\n"
-                "🥇 <b>VIP — 1.999 TL / AY</b>\n"
-                "• 15 kanal/grup • 15 ekip kullanıcısı\n\n"
-                "🔐 Size özel yönetim alanı ve profesyonel altyapı.\n"
-                "📩 Paket detayları ve kurulum için butona dokunun.\n\n"
-                "<b>🧡 MEDYAECAN — Teknoloji, Güç ve Kontrol.</b>"
+                f"🧡 <b>{brand} | DİJİTAL YÖNETİM</b>\n\n"
+                "İşinizi büyütürken yönetimle vakit kaybetmeyin!\n\n"
+                "🤖 İşinize özel Telegram botları\n"
+                "⚙️ Profesyonel yönetim panelleri\n"
+                "👥 Müşteri ve ekip kontrolü\n"
+                "📢 Otomatik duyuru ve bildirimler\n"
+                "🔐 Size özel sistem ve kurulum desteği\n\n"
+                "<b>Tüm yönetim süreçleriniz tek panelde, kontrol tamamen sizde!</b>\n\n"
+                "🚀 Sistemi canlı görmek ve size özel demo talep etmek için butona dokunun.\n\n"
+                "<b>🧡 MEDYAECAN — Teknoloji. Güç ve Kontrol.</b>"
             )
-            button_text = "🧡 Paketleri ve fiyatları gör"
+            button_text = "🧡 Demo ve bilgi al"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                 button_text[:60], url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
@@ -2663,12 +2656,18 @@ async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
                     pass
             brand = (tenant["tenant_name"] or "MEDYAECAN").strip()[:60]
             promo_text = (
-                f"🧡 {brand} | YAZILIM & OTOMASYON\n\n"
-                "🤖 Telegram botları ve VIP kanal yönetim sistemleri\n"
-                "⚙️ İşletmelere özel otomasyon çözümleri\n\n"
-                "📦 SATIŞ PAKETLERİMİZİ VE FİYATLARIMIZI GÖRMEK İÇİN BUTONA DOKUN."
+                f"🧡 <b>{brand} | DİJİTAL YÖNETİM</b>\n\n"
+                "İşinizi büyütürken yönetimle vakit kaybetmeyin!\n\n"
+                "🤖 İşinize özel Telegram botları\n"
+                "⚙️ Profesyonel yönetim panelleri\n"
+                "👥 Müşteri ve ekip kontrolü\n"
+                "📢 Otomatik duyuru ve bildirimler\n"
+                "🔐 Size özel sistem ve kurulum desteği\n\n"
+                "<b>Tüm yönetim süreçleriniz tek panelde, kontrol tamamen sizde!</b>\n\n"
+                "🚀 Sistemi canlı görmek ve size özel demo talep etmek için butona dokunun.\n\n"
+                "<b>🧡 MEDYAECAN — Teknoloji. Güç ve Kontrol.</b>"
             )
-            button_text = "🧡 Paketleri ve fiyatları gör"
+            button_text = "🧡 Demo ve bilgi al"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                 button_text, url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
