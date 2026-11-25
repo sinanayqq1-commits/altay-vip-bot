@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
 )
 
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -703,16 +703,31 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     with connect() as c:
-        cur = c.execute(
+        legacy_cur = c.execute(
             "UPDATE memberships SET status='revoked' WHERE user_id=? AND status='active'", (uid,)
         )
-    removed = False
+        tenant_cur = c.execute(
+            "UPDATE tenant_memberships SET status='revoked' WHERE user_id=? AND status='active'", (uid,)
+        )
+        vip_channels = [int(r[0]) for r in c.execute(
+            "SELECT channel_id FROM tenant_memberships WHERE user_id=? UNION SELECT channel_id FROM tenant_channels WHERE channel_type='vip' AND status='active'",
+            (uid,)
+        ).fetchall()]
+    removed_count = 0
+    targets = set(vip_channels)
     try:
-        await context.bot.ban_chat_member(channel_id(), uid)
-        await context.bot.unban_chat_member(channel_id(), uid, only_if_banned=True)
-        removed = True
+        targets.add(channel_id())
     except Exception:
-        log.exception("Kullanıcı kanaldan çıkarılamadı: %s", uid)
+        pass
+    for target in targets:
+        try:
+            await context.bot.ban_chat_member(target, uid)
+            await context.bot.unban_chat_member(target, uid, only_if_banned=True)
+            removed_count += 1
+        except Exception:
+            log.exception("Kullanıcı VIP kanalından çıkarılamadı: %s / %s", target, uid)
+    removed = removed_count > 0
+    changed_count = legacy_cur.rowcount + tenant_cur.rowcount
 
     try:
         await context.bot.send_message(
@@ -900,6 +915,35 @@ async def expire_tenant_memberships(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(int(row['user_id']), 'VIP üyeliğinin süresi doldu.')
         except Exception:
             log.info('Süre bitiş bildirimi kullanıcıya gönderilemedi: %s', row['user_id'])
+
+
+async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject re-entry to registered VIP channels without a current active membership."""
+    cm = update.chat_member
+    if not cm or not cm.new_chat_member or cm.new_chat_member.status not in ("member", "administrator", "creator"):
+        return
+    chat_id = update.effective_chat.id
+    user_id = cm.new_chat_member.user.id
+    if cm.old_chat_member and cm.old_chat_member.status in ("member", "administrator", "creator"):
+        return
+    current = now().isoformat()
+    with connect() as c:
+        tenant_ok = c.execute("""SELECT 1 FROM tenant_memberships
+            WHERE channel_id=? AND user_id=? AND status='active' AND expires_at>?
+            LIMIT 1""", (chat_id, user_id, current)).fetchone()
+        legacy_ok = None
+        if CHANNEL_ID and str(chat_id) == str(CHANNEL_ID):
+            legacy_ok = c.execute("""SELECT 1 FROM memberships
+                WHERE user_id=? AND status='active' AND expires_at>? LIMIT 1""",
+                (user_id, current)).fetchone()
+    if tenant_ok or legacy_ok:
+        return
+    try:
+        await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+        await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
+        log.info("Yetkisiz VIP yeniden katılım engellendi: chat=%s user=%s", chat_id, user_id)
+    except Exception:
+        log.exception("Yetkisiz VIP kullanıcısı çıkarılamadı: chat=%s user=%s", chat_id, user_id)
 
 
 async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1360,6 +1404,7 @@ def main():
     app.add_handler(CommandHandler("kimim", whoami))
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
+    app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CommandHandler("admin", panel))
     app.add_handler(CommandHandler("uyeler", members))
     app.add_handler(CommandHandler("onayla", grant))
@@ -1380,7 +1425,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
-    app.run_polling()
+    app.run_polling(allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"])
 
 
 if __name__ == "__main__":
