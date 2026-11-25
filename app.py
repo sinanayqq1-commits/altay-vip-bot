@@ -1558,8 +1558,62 @@ async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_
     if not update.effective_user or not admin(update.effective_user.id):
         await update.effective_message.reply_text("Bu test yalnızca ana yöneticiye açık.")
         return
-    await send_golden_group_promo(context)
-    await update.effective_message.reply_text("Test gönderimi tetiklendi. GOLDEN CLUB SOHBET grubunu kontrol et.")
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Test komutunu botla özel sohbetten kullan.")
+        return
+
+    with connect() as c:
+        groups = c.execute("""SELECT channel_id,tenant_id,channel_name FROM tenant_channels
+            WHERE channel_type='chat' AND status='active'
+            ORDER BY tenant_id,channel_id""").fetchall()
+    if not groups:
+        await update.effective_message.reply_text("Test edilecek aktif sohbet kanalı bulunamadı.")
+        return
+
+    bot_username = (await context.bot.get_me()).username
+    if not bot_username:
+        await update.effective_message.reply_text("Bot kullanıcı adı alınamadı; test gönderilemedi.")
+        return
+
+    sent, failed, skipped = 0, 0, 0
+    for group in groups:
+        group_id = int(group["channel_id"])
+        tenant_id = group["tenant_id"]
+        try:
+            with connect() as c:
+                tenant = c.execute("SELECT tenant_name,status FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+                settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+                    "SELECT setting_key,setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key LIKE 'promo_%'",
+                    (tenant_id,)).fetchall()}
+            if not tenant or tenant["status"] != "active":
+                skipped += 1
+                continue
+            brand = (tenant["tenant_name"] or "VIP").strip()[:60]
+            promo_text = settings.get("promo_text") or (
+                f"👑 {brand} | VIP ÜYELİK\\n\\n"
+                "⚽ Özel içerikler ve düzenli paylaşımlar\\n"
+                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\\n\\n"
+                "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
+            )
+            button_text = settings.get("promo_button") or "💎 VIP başvurusu"
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                button_text[:60], url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+            )]])
+            photo_id = settings.get("promo_photo_file_id")
+            if photo_id:
+                await context.bot.send_photo(chat_id=group_id, photo=photo_id,
+                                              caption=promo_text[:1024], reply_markup=kb)
+            else:
+                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], reply_markup=kb)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            log.exception("VIP tanıtım test gönderimi başarısız: tenant=%s group=%s", tenant_id, group_id)
+            log.warning("Test gönderim hata türü: %s", type(exc).__name__)
+
+    await update.effective_message.reply_text(
+        f"🧪 Test gönderimi tamamlandı.\\nGönderilen: {sent} | Başarısız: {failed} | Atlanan: {skipped}"
+    )
 
 
 async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
