@@ -532,57 +532,133 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def tenant_channel_scope(uid, tenant_id):
+    """Return None for tenant-wide access, otherwise the channel IDs assigned to this user."""
+    if admin(uid):
+        return None
+    with connect() as conn:
+        rows = conn.execute("""SELECT channel_id FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND status='active'""",
+            (tenant_id, uid)).fetchall()
+    if any(row["channel_id"] is None for row in rows):
+        return None
+    return sorted({int(row["channel_id"]) for row in rows if row["channel_id"] is not None})
+
+
+def scoped_channel_filter(scope, column="channel_id"):
+    """Build a safe SQL predicate and parameters for a channel-scoped query."""
+    if scope is None:
+        return "", ()
+    if not scope:
+        return " AND 1=0", ()
+    return f" AND {column} IN ({','.join('?' for _ in scope)})", tuple(scope)
+
+
 async def tenant_customer_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     tid = current_tenant_id(uid, context)
     if not tid or not manager_can_access(uid, tid):
-        await q.answer('Müşteri erişimi bulunamadı.', show_alert=True); return
+        await q.answer('Müşteri erişimi bulunamadı.', show_alert=True)
+        return
+    scope = tenant_channel_scope(uid, tid)
     await q.answer()
+
     if q.data == 'tenantpanel:home':
         await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
+
     elif q.data == 'tenantpanel:roles':
         rows = [r for r in tenant_permissions(uid) if r['tenant_id'] == tid]
-        lines = ['YETKİLERİM'] + [f"• {r['role']} — {r['channel_name'] or 'Genel yetki'}" for r in rows]
-        await q.edit_message_text('\\n'.join(lines), reply_markup=tenant_panel_keyboard())
+        lines = ['YETKİLERİM'] + [
+            f"• {r['role']} — {r['channel_name'] or 'Genel yetki'}" for r in rows
+        ]
+        await q.edit_message_text("\n".join(lines), reply_markup=tenant_panel_keyboard())
+
     elif q.data == 'tenantpanel:channels':
+        where, params = scoped_channel_filter(scope, "channel_id")
         with connect() as c:
-            rows = c.execute('SELECT channel_name,channel_id,channel_type FROM tenant_channels WHERE tenant_id=? AND status=\'active\'', (tid,)).fetchall()
-        lines = ['KANALLARIM'] + [f"• {r['channel_name']} — {r['channel_type']} (ID: {r['channel_id']})" for r in rows]
-        if not rows: lines.append('Henüz kanal kaydedilmemiş.')
-        await q.edit_message_text('\\n'.join(lines), reply_markup=tenant_panel_keyboard())
+            rows = c.execute(
+                "SELECT channel_name,channel_id,channel_type FROM tenant_channels "
+                "WHERE tenant_id=? AND status='active'" + where + " ORDER BY channel_name",
+                (tid,) + params
+            ).fetchall()
+        lines = ['KANALLARIM'] + [
+            f"• {r['channel_name']} — {r['channel_type']} (ID: {r['channel_id']})" for r in rows
+        ]
+        if not rows:
+            lines.append('Henüz erişimin olan aktif kanal kaydedilmemiş.')
+        await q.edit_message_text("\n".join(lines), reply_markup=tenant_panel_keyboard())
+
     elif q.data == 'tenantpanel:members':
         if not manager_has_permission(uid, tid, None, 'members'):
-            await q.answer('Üye görüntüleme yetkin yok.', show_alert=True); return
+            await q.answer('Üye görüntüleme yetkin yok.', show_alert=True)
+            return
+        where, params = scoped_channel_filter(scope, "channel_id")
         with connect() as c:
-            rows = c.execute('SELECT user_id,username,expires_at FROM tenant_memberships WHERE tenant_id=? AND status=\'active\' AND expires_at>? ORDER BY expires_at LIMIT 50', (tid,now().isoformat())).fetchall()
+            rows = c.execute(
+                "SELECT user_id,username,expires_at,channel_id FROM tenant_memberships "
+                "WHERE tenant_id=? AND status='active' AND expires_at>?" + where +
+                " ORDER BY expires_at LIMIT 50",
+                (tid, now().isoformat()) + params
+            ).fetchall()
         lines = ['AKTİF VIP ÜYELERİM']
         for r in rows:
-            exp = datetime.fromisoformat(r['expires_at']); lines.append(f"• {r['username'] or r['user_id']} (ID: {r['user_id']}) — {exp:%d.%m.%Y}")
-        if not rows: lines.append('Aktif üye bulunmuyor.')
-        await q.edit_message_text('\\n'.join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+            exp = datetime.fromisoformat(r['expires_at'])
+            lines.append(f"• {r['username'] or r['user_id']} (ID: {r['user_id']}) — {exp:%d.%m.%Y} | Kanal: {r['channel_id']}")
+        if not rows:
+            lines.append('Erişim kapsamındaki aktif üye bulunmuyor.')
+        await q.edit_message_text("\n".join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+
     elif q.data == 'tenantpanel:pending':
         if not manager_has_permission(uid, tid, None, 'applications'):
-            await q.answer('Başvuru görüntüleme yetkin yok.', show_alert=True); return
+            await q.answer('Başvuru görüntüleme yetkin yok.', show_alert=True)
+            return
+        where, params = scoped_channel_filter(scope, "channel_id")
         with connect() as c:
-            rows = c.execute('SELECT application_id,user_id,username,full_name FROM tenant_applications WHERE tenant_id=? AND status=\'pending\' ORDER BY created_at LIMIT 20', (tid,)).fetchall()
-        lines = ['BEKLEYEN BAŞVURULARIM']; buttons = []
+            rows = c.execute(
+                "SELECT application_id,user_id,username,full_name,channel_id FROM tenant_applications "
+                "WHERE tenant_id=? AND status='pending'" + where +
+                " ORDER BY created_at LIMIT 20",
+                (tid,) + params
+            ).fetchall()
+        lines = ['BEKLEYEN BAŞVURULARIM']
+        buttons = []
         for r in rows:
-            lines.append(f"• {r['full_name'] or r['username'] or r['user_id']} — ID {r['user_id']}")
-            buttons.append([InlineKeyboardButton(f"Onayla {r['user_id']}", callback_data=f"tenantapp:approve:{r['application_id']}"), InlineKeyboardButton('Reddet', callback_data=f"tenantapp:reject:{r['application_id']}")])
-        if not rows: lines.append('Bekleyen başvuru yok.')
+            lines.append(f"• {r['full_name'] or r['username'] or r['user_id']} — ID {r['user_id']} | Kanal: {r['channel_id']}")
+            buttons.append([
+                InlineKeyboardButton(f"Onayla {r['user_id']}", callback_data=f"tenantapp:approve:{r['application_id']}"),
+                InlineKeyboardButton('Reddet', callback_data=f"tenantapp:reject:{r['application_id']}")
+            ])
+        if not rows:
+            lines.append('Erişim kapsamındaki bekleyen başvuru yok.')
         buttons.append([InlineKeyboardButton('Panel', callback_data='tenantpanel:home')])
-        await q.edit_message_text('\\n'.join(lines)[:3500], reply_markup=InlineKeyboardMarkup(buttons))
+        await q.edit_message_text("\n".join(lines)[:3500], reply_markup=InlineKeyboardMarkup(buttons))
+
     elif q.data == 'tenantpanel:payments':
         if not manager_has_permission(uid, tid, None, 'payments'):
-            await q.answer('Ödeme görüntüleme yetkin yok.', show_alert=True); return
+            await q.answer('Ödeme görüntüleme yetkin yok.', show_alert=True)
+            return
+        where, params = scoped_channel_filter(scope, "channel_id")
         with connect() as c:
-            total = c.execute('SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments WHERE membership_type=\'tenant\' AND tenant_id=?', (tid,)).fetchone()
-            rows = c.execute('SELECT user_id,amount,note,paid_at FROM membership_payments WHERE membership_type=\'tenant\' AND tenant_id=? ORDER BY paid_at DESC LIMIT 20', (tid,)).fetchall()
+            total = c.execute(
+                "SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments "
+                "WHERE membership_type='tenant' AND tenant_id=?" + where,
+                (tid,) + params
+            ).fetchone()
+            rows = c.execute(
+                "SELECT user_id,amount,note,paid_at,channel_id FROM membership_payments "
+                "WHERE membership_type='tenant' AND tenant_id=?" + where +
+                " ORDER BY paid_at DESC LIMIT 20",
+                (tid,) + params
+            ).fetchall()
         lines = [f"ÖDEME RAPORU — {total[0]} kayıt / {total[1]:,.2f} TL"]
         for r in rows:
-            when = datetime.fromisoformat(r['paid_at']); lines.append(f"• {r['user_id']} — {r['amount']:,.2f} TL — {when:%d.%m.%Y}")
-        await q.edit_message_text('\\n'.join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+            when = datetime.fromisoformat(r['paid_at'])
+            lines.append(f"• {r['user_id']} — {r['amount']:,.2f} TL — {when:%d.%m.%Y} | Kanal: {r['channel_id']}")
+        if not rows:
+            lines.append("Erişim kapsamındaki ödeme kaydı bulunmuyor.")
+        await q.edit_message_text("\n".join(lines)[:3900], reply_markup=tenant_panel_keyboard())
+
     else:
         await q.answer('Bu bölüm müşteri panelinde kullanılamıyor.', show_alert=True)
 
