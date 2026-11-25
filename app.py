@@ -493,14 +493,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception('VIP derin bağlantısı işlenemedi; normal /start menüsüne dönülüyor')
     # Kullanıcı tipine göre birbirinden tamamen ayrı başlangıç menüleri.
     persistent_menu = ReplyKeyboardMarkup(
-        [[KeyboardButton("🚀 BAŞLAT / ANA MENÜ")]],
+        [[KeyboardButton("🧡 MEDYAECAN / ANA MENÜ")]],
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Menüyü açmak için butona dokun"
     )
     if admin(user.id):
         msg = f"🛡 MEDYAECAN — ANA YÖNETİCİ\n\nHoş geldin {user.first_name}!\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
-        rows = [[InlineKeyboardButton("🛠 Ana Yönetim Panelini Aç", callback_data="home:admin")]]
+        rows = [[InlineKeyboardButton("🧡 MEDYAECAN Yönetim Panelini Aç", callback_data="home:admin")]]
     elif tenant_permissions(user.id):
         permissions = tenant_permissions(user.id)
         customer_names = list(dict.fromkeys(str(r["tenant_name"]) for r in permissions))
@@ -527,7 +527,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows = [[InlineKeyboardButton("💎 VIP Başvurusu", callback_data="apply")],
                     [InlineKeyboardButton("🆘 Destek", callback_data="support")]]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(rows))
-    await update.message.reply_text("Ana menüye dönmek için aşağıdaki butonu kullanabilirsin.", reply_markup=persistent_menu)
+    await update.message.reply_text("MEDYAECAN ana menüsüne dönmek için aşağıdaki butonu kullanabilirsin.", reply_markup=persistent_menu)
 
 
 async def start_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2593,7 +2593,7 @@ async def application_error_handler(update: object, context: ContextTypes.DEFAUL
         try:
             await context.bot.send_message(
                 admin_id,
-                f"⚠️ GOLDEN VIP botunda bir işlem hatası oluştu.\nTür: {error_name}\nAyrıntı için Railway loglarını kontrol et."
+                f"⚠️ MEDYAECAN sisteminde bir işlem hatası oluştu.\nTür: {error_name}\nAyrıntı için Railway loglarını kontrol et."
             )
         except Exception:
             log.exception("Hata bildirimi yöneticiye gönderilemedi: %s", admin_id)
@@ -2601,7 +2601,7 @@ async def application_error_handler(update: object, context: ContextTypes.DEFAUL
 
 async def post_init(app):
     await app.bot.set_my_commands([
-        BotCommand("start", "Botu başlat / ana menü"),
+        BotCommand("start", "MEDYAECAN ana menü"),
         BotCommand("admin", "Yönetim panelini aç"),
         BotCommand("uyeler", "VIP üyelerini görüntüle"),
         BotCommand("ekip", "Ekip yetkilerini görüntüle"),
@@ -3710,7 +3710,7 @@ def main():
     app = Application.builder().token(TOKEN).post_init(post_init).build()
     app.add_error_handler(application_error_handler)
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex(r"^🚀 BAŞLAT / ANA MENÜ$"), start_menu_button))
+    app.add_handler(MessageHandler(filters.Regex(r"^🧡 MEDYAECAN / ANA MENÜ$"), start_menu_button))
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("vipver", grant_tenant_vip))
     app.add_handler(CommandHandler("kimim", whoami))
