@@ -482,7 +482,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         if not legacy_rows and not tenant_rows:
             lines.append("Aktif VIP üye bulunmuyor.")
         lines += ["", f"📦 Süresi dolmuş kayıt: {expired_legacy + expired_tenant}"]
-        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:pending":
         with connect() as c:
@@ -514,7 +514,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         if not legacy and not tenant:
             lines.append("Bekleyen başvuru yok.")
         keyboard.append([InlineKeyboardButton("↩️ Yönetim paneli", callback_data="tenantpanel:status")])
-        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(keyboard))
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif q.data == "tenantpanel:status":
         with connect() as c:
