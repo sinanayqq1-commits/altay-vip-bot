@@ -1126,11 +1126,27 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             if not channel: raise ValueError()
         except (ValueError,IndexError,TypeError):
             await q.answer("Kanal bulunamadı.", show_alert=True); return
-        context.user_data["pending_admin_team"] = {"tenant_id":tenant_key,"channel_id":cid,"created_by":uid}
+        token = secrets.token_urlsafe(12)
+        created = now()
+        with connect() as c:
+            cur = c.execute("""INSERT INTO team_invites
+                (token,tenant_id,channel_id,invited_by,status,created_at,expires_at)
+                VALUES(?,?,?,?,'pending',?,?)""",
+                (token, tenant_key, cid, uid, created.isoformat(), (created + timedelta(hours=24)).isoformat()))
+            invite_id = cur.lastrowid
+        bot_username = (await context.bot.get_me()).username
+        if not bot_username:
+            await q.answer("Bot kullanıcı adı alınamadı.", show_alert=True)
+            return
+        invite_url = f"https://t.me/{bot_username}?start=team_{token}"
         await q.edit_message_text(
-            f"➕ EKİP YETKİSİ — {channel['channel_name']}\n\nTelegram kullanıcı ID ve rolü yaz.\nÖrnek: 123456789 moderator\n\nRoller: manager, moderator, finance, publisher",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]])
+            f"🔗 EKİP DAVETİ HAZIR\n\nMüşteri: {tenant_key}\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nBağlantıyı eklemek istediğin kişiye gönder. Kişi botu başlattığında hesabı otomatik tanınacak; ardından rolünü seçeceksin.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📨 Davet bağlantısını gönder", url=invite_url)],
+                [InlineKeyboardButton("⬅️ Müşteri ekibine dön", callback_data=f"tenantpanel:admintenant:{tenant_key}")]
+            ])
         )
+        log_admin_action(uid, "Ana yönetici ekip daveti oluşturdu", None, f"tenant={tenant_key}; kanal={cid}; davet={invite_id}")
 
     elif q.data.startswith("tenantpanel:atr:"):
         try:
