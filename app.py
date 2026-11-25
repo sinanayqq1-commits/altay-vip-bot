@@ -2190,6 +2190,9 @@ async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if not msg or not user or not chat or chat.type != 'private':
         return
+    if msg.photo and context.user_data.get("awaiting_promo_photo"):
+        await save_promo_photo(update, context)
+        return
     tenant_id = current_tenant_id(user.id, context)
     if not tenant_id or not manager_has_permission(user.id, tenant_id, None, 'settings'):
         await msg.reply_text('Bu müşteri için görsel ayarı yetkin yok.'); return
