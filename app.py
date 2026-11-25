@@ -1,4 +1,8 @@
-import os, logging, sqlite3
+import os, l
+        c.execute("""CREATE TABLE IF NOT EXISTS admin_audit_log(
+            audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id INTEGER NOT NULL, action TEXT NOT NULL,
+            target_user_id INTEGER, details TEXT, created_at TEXT NOT NULL)""")ogging, sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -47,6 +51,14 @@ def connect():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def log_admin_action(actor_id, action, target_user_id=None, details=""):
+    with connect() as conn:
+        conn.execute("""INSERT INTO admin_audit_log
+            (actor_id,action,target_user_id,details,created_at)
+            VALUES(?,?,?,?,?)""",
+            (int(actor_id), action[:80], target_user_id, details[:500], now().isoformat()))
 
 
 def init_db():
@@ -245,6 +257,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
         [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
+        [InlineKeyboardButton("🧾 Yönetici işlem geçmişi", callback_data="tenantpanel:audit")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
@@ -794,6 +807,20 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
             ]
         ))
+
+    elif q.data == "tenantpanel:audit":
+        with connect() as conn:
+            rows = conn.execute("""SELECT actor_id,action,target_user_id,details,created_at
+                FROM admin_audit_log ORDER BY audit_id DESC LIMIT 30""").fetchall()
+        lines = ["🧾 YÖNETİCİ İŞLEM GEÇMİŞİ", "", "Son 30 işlem:"]
+        for row in rows:
+            stamp = datetime.fromisoformat(row["created_at"])
+            target = f" | Üye: {row['target_user_id']}" if row["target_user_id"] else ""
+            extra = f" | {row['details']}" if row["details"] else ""
+            lines.append(f"• {stamp:%d.%m %H:%M} | Yönetici: {row['actor_id']} | {row['action']}{target}{extra}")
+        if not rows:
+            lines.append("Henüz kaydedilmiş yönetici işlemi yok.")
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:revenue":
         current = now()
