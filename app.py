@@ -627,7 +627,11 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             return
         where, params = scoped_channel_filter(scope, "a.channel_id")
         with connect() as c:
-            rows = c.execute("""SELECT a.user_id,a.role,a.channel_id,ch.channel_name
+            rows = c.execute("""SELECT a.user_id,a.role,a.channel_id,ch.channel_name,
+                    (SELECT ti.invited_username FROM team_invites ti
+                     WHERE ti.tenant_id=a.tenant_id AND ti.channel_id=a.channel_id
+                       AND ti.invited_user_id=a.user_id AND ti.status='completed'
+                     ORDER BY ti.invite_id DESC LIMIT 1) AS username
                 FROM tenant_admins a LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
                 WHERE a.tenant_id=? AND a.status='active'""" + where +
                 " ORDER BY ch.channel_name,a.user_id,a.role", (tid,) + params).fetchall()
@@ -637,10 +641,12 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         lines = ['🛡 EKİP YÖNETİMİ', '', 'Aktif ekip yetkilileri:']
         buttons = []
         for r in rows:
-            label = f"{r['user_id']} — {r['role']} — {r['channel_name'] or 'Genel'}"
+            display = f"@{r['username']}" if r['username'] else f"ID {r['user_id']}"
+            label = f"{display} — {r['role']} — {r['channel_name'] or 'Genel'}"
             lines.append("• " + label)
             if r['role'] != 'owner' and r['channel_id'] is not None:
-                buttons.append([InlineKeyboardButton(f"❌ {r['user_id']} / {r['role']}", callback_data=f"tenantpanel:teamrevokeask:{r['channel_id']}:{r['user_id']}")])
+                buttons.append([InlineKeyboardButton(f"✏️ Rol: {display}", callback_data=f"tenantpanel:teamroleask:{r['channel_id']}:{r['user_id']}")])
+                buttons.append([InlineKeyboardButton(f"❌ Yetkiyi kaldır: {display}", callback_data=f"tenantpanel:teamrevokeask:{r['channel_id']}:{r['user_id']}")])
         if not rows:
             lines.append('Henüz ekip yetkilisi eklenmemiş.')
         lines += ['', 'Yeni yetkili eklemek için aşağıdaki butona bas.']
@@ -699,6 +705,74 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             await q.answer('Bu kanal için ekip daveti oluşturma yetkin yok.', show_alert=True)
         except (ValueError, TypeError):
             await q.answer('Kanal veya bot bağlantısı oluşturulamadı.', show_alert=True)
+
+    elif q.data.startswith('tenantpanel:teamroleask:'):
+        try:
+            _, _, _, channel_text, target_text = q.data.split(':')
+            channel_value, target = int(channel_text), int(target_text)
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'settings'):
+                raise PermissionError()
+            with connect() as c:
+                roles = c.execute("""SELECT role FROM tenant_admins WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value)).fetchall()
+            if not roles or any(row['role'] == 'owner' for row in roles):
+                raise ValueError()
+            actor_roles = tenant_permissions(uid)
+            is_owner = any(row['tenant_id'] == tid and row['role'] == 'owner' and
+                           (row['channel_id'] is None or row['channel_id'] == channel_value) for row in actor_roles)
+            role_buttons = [
+                [InlineKeyboardButton('🛡 Moderatör', callback_data=f'tenantpanel:teamrole:{channel_value}:{target}:moderator'),
+                 InlineKeyboardButton('💳 Finans', callback_data=f'tenantpanel:teamrole:{channel_value}:{target}:finance')],
+                [InlineKeyboardButton('📣 Yayıncı', callback_data=f'tenantpanel:teamrole:{channel_value}:{target}:publisher')]
+            ]
+            if is_owner:
+                role_buttons.append([InlineKeyboardButton('👔 Yönetici', callback_data=f'tenantpanel:teamrole:{channel_value}:{target}:manager')])
+            role_buttons.append([InlineKeyboardButton('⬅️ Vazgeç', callback_data='tenantpanel:team')])
+        except PermissionError:
+            await q.answer('Bu kanalın ekibini değiştirme yetkin yok.', show_alert=True)
+            return
+        except (ValueError, TypeError):
+            await q.answer('Aktif ekip kaydı bulunamadı.', show_alert=True)
+            return
+        await q.edit_message_text(f'✏️ {target} kullanıcısının yeni görevini seç:', reply_markup=InlineKeyboardMarkup(role_buttons))
+
+    elif q.data.startswith('tenantpanel:teamrole:'):
+        try:
+            _, _, _, channel_text, target_text, new_role = q.data.split(':')
+            channel_value, target = int(channel_text), int(target_text)
+            if new_role not in ('manager', 'moderator', 'finance', 'publisher'):
+                raise ValueError()
+            if scope is not None and channel_value not in scope:
+                raise PermissionError()
+            if not manager_has_permission(uid, tid, channel_value, 'settings'):
+                raise PermissionError()
+            actor_roles = tenant_permissions(uid)
+            is_owner = any(row['tenant_id'] == tid and row['role'] == 'owner' and
+                           (row['channel_id'] is None or row['channel_id'] == channel_value) for row in actor_roles)
+            if new_role == 'manager' and not is_owner:
+                raise PermissionError()
+            with connect() as c:
+                current = c.execute("""SELECT role FROM tenant_admins WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value)).fetchall()
+                if not current or any(row['role'] == 'owner' for row in current):
+                    raise ValueError()
+                if any(row['role'] == 'manager' for row in current) and not is_owner:
+                    raise PermissionError()
+                c.execute("""UPDATE tenant_admins SET status='inactive' WHERE tenant_id=? AND user_id=?
+                    AND channel_id=? AND status='active'""", (tid,target,channel_value))
+                c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+                    VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
+                    DO UPDATE SET status='active'""", (tid,target,new_role,channel_value,now().isoformat()))
+            log_admin_action(uid, 'Müşteri panelinden ekip rolü değiştirildi', target,
+                             f'rol={new_role}; tenant={tid}; kanal={channel_value}')
+            await q.edit_message_text(f'✅ Ekip rolü güncellendi.\nYeni görev: {new_role}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🛡 Ekip yönetimine dön', callback_data='tenantpanel:team')]]))
+        except PermissionError:
+            await q.answer('Bu rolü verme veya değiştirme yetkin yok.', show_alert=True)
+        except (ValueError, TypeError):
+            await q.answer('Ekip rolü değiştirilemedi; kayıt bulunamadı.', show_alert=True)
 
     elif q.data.startswith('tenantpanel:teamrevokeask:'):
         try:
