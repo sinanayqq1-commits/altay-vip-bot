@@ -253,9 +253,33 @@ def tenant_permissions(uid):
         """, (uid,)).fetchall()
 
 
+def tenant_ids_for_user(uid):
+    return list(dict.fromkeys(str(r['tenant_id']) for r in tenant_permissions(uid)))
+
+
+def current_tenant_id(uid, context):
+    if admin(uid):
+        selected = context.user_data.get('selected_tenant_id')
+        if selected:
+            with connect() as c:
+                if c.execute('SELECT 1 FROM tenants WHERE tenant_id=? AND status=\'active\'', (selected,)).fetchone(): return selected
+        return 'legacy_single'
+    ids = tenant_ids_for_user(uid)
+    selected = context.user_data.get('selected_tenant_id')
+    if selected in ids: return selected
+    return ids[0] if len(ids) == 1 else None
+
+
+def tenant_panel_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton('👥 Üyelerim', callback_data='tenantpanel:members'), InlineKeyboardButton('⏳ Başvurularım', callback_data='tenantpanel:pending')],
+        [InlineKeyboardButton('📡 Kanallarım', callback_data='tenantpanel:channels'), InlineKeyboardButton('💳 Ödemelerim', callback_data='tenantpanel:payments')],
+        [InlineKeyboardButton('🔐 Yetkilerim', callback_data='tenantpanel:roles')]
+    ])
+
+
 def can_open_admin_panel(uid):
-    # Ana yönetim paneli yalnızca ADMIN_IDS içindeki hesaplara açıktır.
-    return admin(uid)
+    return admin(uid) or bool(tenant_permissions(uid))
 
 
 def admin_panel_keyboard():
@@ -492,6 +516,13 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not can_open_admin_panel(uid):
         await update.message.reply_text("Bu panel için yönetici yetkin bulunmuyor.")
         return
+    if not admin(uid):
+        tid = current_tenant_id(uid, context)
+        if not tid:
+            await update.message.reply_text('Birden fazla müşteride yetkin var. /musterisec MUSTERI_ID kullan.')
+            return
+        await update.message.reply_text('🏢 MÜŞTERİ YÖNETİM PANELİ\\n\\nYalnızca yetkili olduğun müşterinin kayıtlarını yönetebilirsin.', reply_markup=tenant_panel_keyboard())
+        return
     await update.message.reply_text(
         "🛠 ALTAY VIP BOT — YÖNETİCİ PANELİ\n\n"
         "VIP üyeleri ve bekleyen başvuruları buradan yönetebilirsin.\n"
@@ -506,6 +537,9 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
     uid = q.from_user.id
     if not can_open_admin_panel(uid):
         await q.answer("Bu panel için yetkin yok.", show_alert=True)
+        return
+    if not admin(uid):
+        await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
 
