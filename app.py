@@ -235,6 +235,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("👥 VIP üyeler", callback_data="tenantpanel:members"),
          InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
+        [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
@@ -562,6 +563,47 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines.append("Aktif VIP üye bulunmuyor.")
         lines += ["", f"📦 Süresi dolmuş kayıt: {expired_legacy + expired_tenant}"]
         await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+
+    elif q.data == "tenantpanel:expiring":
+        current_dt = now()
+        horizon = (current_dt + timedelta(days=7)).isoformat()
+        current = current_dt.isoformat()
+        with connect() as c:
+            legacy_rows = c.execute("""
+                SELECT user_id,username,expires_at FROM memberships
+                WHERE status='active' AND expires_at>? AND expires_at<=?
+                ORDER BY expires_at LIMIT 100
+            """, (current, horizon)).fetchall()
+            tenant_rows = c.execute("""
+                SELECT tm.user_id,tm.username,tm.expires_at,t.tenant_name,tc.channel_name
+                FROM tenant_memberships tm
+                LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
+                LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+                WHERE tm.status='active' AND tm.expires_at>? AND tm.expires_at<=?
+                ORDER BY tm.expires_at LIMIT 100
+            """, (current, horizon)).fetchall()
+
+        lines = ["📅 YAKLAŞAN ÜYELİK BİTİŞLERİ", "Önümüzdeki 7 gün içinde süresi dolacak üyeler:", ""]
+        for r in legacy_rows:
+            expiry = datetime.fromisoformat(r["expires_at"])
+            remaining = max(0, (expiry.date() - current_dt.date()).days)
+            username = f"@{r['username']}" if r["username"] else "kullanıcı adı yok"
+            lines.append(
+                f"• ID: {r['user_id']} | {username}\\n"
+                f"  GOLDEN VIP — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
+            )
+        for r in tenant_rows:
+            expiry = datetime.fromisoformat(r["expires_at"])
+            remaining = max(0, (expiry.date() - current_dt.date()).days)
+            username = f"@{r['username']}" if r["username"] else "kullanıcı adı yok"
+            lines.append(
+                f"• ID: {r['user_id']} | {username}\\n"
+                f"  {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'VIP kanal'}"
+                f" — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
+            )
+        if not legacy_rows and not tenant_rows:
+            lines.append("Önümüzdeki 7 gün içinde bitecek aktif üyelik yok.")
+        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:pending":
         with connect() as c:
