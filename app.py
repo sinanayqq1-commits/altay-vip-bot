@@ -433,15 +433,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             await update.effective_message.reply_text(
-                "🧡 MEDYAECAN | YAZILIM & OTOMASYON\\n\\n"
-                "Telegram botları, müşteri ve VIP kanal yönetimi çözümleri.\\n\\n"
-                "📦 SATIŞ PAKETLERİMİZ\\n\\n"
-                + "\\n".join(
-                    f"• {PLAN_CATALOG[k]['name']} — {PLAN_CATALOG[k]['price']:,} TL/ay\\n"
+                "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\n"
+                "Telegram botları, müşteri ve VIP kanal yönetimi çözümleri.\n\n"
+                "📦 SATIŞ PAKETLERİMİZ\n\n"
+                + "\n".join(
+                    f"• {PLAN_CATALOG[k]['name']} — {PLAN_CATALOG[k]['price']:,} TL/ay\n"
                     f"  {PLAN_CATALOG[k]['channels']} kanal/grup • {PLAN_CATALOG[k]['team']} ekip kullanıcısı"
                     for k in ("starter", "professional", "vip")
                 )
-                + "\\n\\nDetaylı bilgi ve satın alma için aşağıdaki butona dokun.\\n"
+                + "\n\nDetaylı bilgi ve satın alma için aşağıdaki butona dokun.\n"
                 "MEDYAECAN VIP üyelik sistemi ile yazılım satış paketleri ayrı süreçlerdir.",
                 reply_markup=kb
             )
