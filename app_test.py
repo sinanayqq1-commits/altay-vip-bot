@@ -247,9 +247,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(' VIP başvurun yöneticilere özel olarak iletildi. Sonuç sana özel mesajla bildirilecek.')
             return
         except Exception:
-            log.exception('VIP derin bağlantısı işlenemedi')
-            await update.message.reply_text('VIP başvuru bağlantısı geçersiz. Lütfen kanaldaki butonu yeniden kullan.')
-            return
+            # Eski veya bozuk bir derin bağlantı /start ana menüsünü engellemesin.
+            # Başvuru bağlantısı çözümlenemezse normal başlangıç ekranını göster.
+            log.exception('VIP derin bağlantısı işlenemedi; normal /start menüsüne dönülüyor')
     exp = active_expiry(user.id)
     if exp:
         msg = f"Hoş geldin {user.first_name}! VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}"
