@@ -1379,6 +1379,69 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("⬅️ Müşteri ekibine dön", callback_data=f"tenantpanel:admintenant:{tenant_key}")],
             [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]]))
 
+    elif q.data.startswith("tenantpanel:salechoose:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.", show_alert=True); return
+        tenant_id=q.data.split(":",2)[2]
+        with connect() as c: tenant=c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?",(tenant_id,)).fetchone()
+        if not tenant:
+            await q.answer("Müşteri bulunamadı.",show_alert=True); return
+        buttons=[[InlineKeyboardButton(f"{PLAN_CATALOG[p]['name']} — {PLAN_CATALOG[p]['price']:,} TL/ay",callback_data=f"tenantpanel:saleplan:{tenant_id}:{p}")] for p in ("starter","professional","vip")]
+        buttons.append([InlineKeyboardButton("⬅️ Müşteriler",callback_data="tenantpanel:channels")])
+        await q.edit_message_text(f"🧾 {tenant['tenant_name']} için paket seç:",reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith("tenantpanel:saleplan:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.",show_alert=True); return
+        _,_,tenant_id,package=q.data.split(":")
+        if package not in PLAN_CATALOG:
+            await q.answer("Paket geçersiz.",show_alert=True); return
+        buttons=[[InlineKeyboardButton(f"{d} gün",callback_data=f"tenantpanel:saleduration:{tenant_id}:{package}:{d}")] for d in (30,90,365)]
+        buttons.append([InlineKeyboardButton("⬅️ Paketler",callback_data=f"tenantpanel:salechoose:{tenant_id}")])
+        await q.edit_message_text(f"{PLAN_CATALOG[package]['name']} paketi — süre seç:",reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif q.data.startswith("tenantpanel:saleduration:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.",show_alert=True); return
+        _,_,tenant_id,package,day_text=q.data.split(":")
+        days=int(day_text)
+        if package not in PLAN_CATALOG or days not in (30,90,365):
+            await q.answer("Seçim geçersiz.",show_alert=True); return
+        with connect() as c:
+            tenant=c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=?",(tenant_id,)).fetchone()
+            if not tenant:
+                await q.answer("Müşteri bulunamadı.",show_alert=True); return
+            amount=round(PLAN_CATALOG[package]["price"]*days/30)
+            cur=c.execute("""INSERT INTO tenant_sales
+                (tenant_id,package_name,duration_days,amount,status,created_at,created_by)
+                VALUES(?,?,?,?,'pending',?,?)""",(tenant_id,package,days,amount,now().isoformat(),uid))
+            sale_id=cur.lastrowid
+        log_admin_action(uid,"Satış kaydı oluşturuldu",None,f"#{sale_id}; {tenant_id}; {package}; {amount}; {days} gün")
+        await q.edit_message_text(f"🧾 SATIŞ #{sale_id}\nMüşteri: {tenant['tenant_name']}\nPaket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Ödeme alındı / Onayla",callback_data=f"tenantpanel:saleconfirm:{sale_id}")],[InlineKeyboardButton("💳 Ödeme takibi",callback_data="tenantpanel:payments")]]))
+
+    elif q.data.startswith("tenantpanel:saleconfirm:"):
+        if not admin(uid):
+            await q.answer("Yalnızca ana yönetici.",show_alert=True); return
+        sale_id=int(q.data.split(":")[2])
+        with connect() as c:
+            sale=c.execute("SELECT * FROM tenant_sales WHERE sale_id=?",(sale_id,)).fetchone()
+            if not sale:
+                await q.answer("Satış bulunamadı.",show_alert=True); return
+            if sale["status"]=="paid":
+                await q.answer("Bu ödeme zaten onaylı.",show_alert=True); return
+            tenant=c.execute("SELECT tenant_name,license_expires_at FROM tenants WHERE tenant_id=?",(sale["tenant_id"],)).fetchone()
+            if not tenant:
+                await q.answer("Müşteri bulunamadı.",show_alert=True); return
+            current=now()
+            expiry=datetime.fromisoformat(tenant["license_expires_at"]) if tenant["license_expires_at"] else None
+            start=expiry if expiry and expiry>current else current
+            expires=start+timedelta(days=sale["duration_days"])
+            c.execute("UPDATE tenants SET plan_name=?,license_status='active',license_expires_at=?,status='active' WHERE tenant_id=?",(sale["package_name"],expires.isoformat(),sale["tenant_id"]))
+            c.execute("UPDATE tenant_sales SET status='paid',paid_at=?,confirmed_by=? WHERE sale_id=?",(current.isoformat(),uid,sale_id))
+        log_admin_action(uid,"Satış ödemesi onaylandı",None,f"#{sale_id}; {sale['tenant_id']}; {sale['amount']} TL")
+        await q.edit_message_text(f"✅ ÖDEME ONAYLANDI\n#{sale_id} — {tenant['tenant_name']}\n{sale['amount']:,.2f} TL\nLisans bitişi: {expires:%d.%m.%Y}",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Ödeme takibi",callback_data="tenantpanel:payments")],[InlineKeyboardButton("🏠 Ana panel",callback_data="tenantpanel:home")]]))
+
     elif q.data == "tenantpanel:channels":
         if admin(uid):
             with connect() as c:
@@ -1398,7 +1461,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                     WHERE t.status='active' AND ch.status='active'
                     ORDER BY t.tenant_name, ch.channel_name
                 """).fetchall()
-            lines = ["🏢 MÜŞTERİLER"]
+            lines = ["🏢 MÜŞTERİLER", "Satış oluşturmak için müşteriyi seç:"]
+            tenant_buttons = [[InlineKeyboardButton(f"🧾 {t['tenant_name']} — Satış oluştur", callback_data=f"tenantpanel:salechoose:{t['tenant_id']}")] for t in tenants]
             lines += [f"• {t['tenant_name']} ({t['tenant_id']}) — {t['status']}" for t in tenants]
             lines += ["", "📡 KANALLAR"]
             lines += [
@@ -1418,7 +1482,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 f"(ID: {r['channel_id'] or 'genel'})"
                 for r in rows
             ]
-        await q.edit_message_text("\n".join(lines), reply_markup=admin_panel_keyboard())
+        await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(tenant_buttons + [[InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]]) if admin(uid) else admin_panel_keyboard())
 
     elif q.data == "tenantpanel:roles":
         if admin(uid):
