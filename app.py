@@ -2159,18 +2159,16 @@ async def save_site_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if not msg or not user or not chat or chat.type != 'private':
         return
-    if not admin(user.id):
-        await msg.reply_text('Bu görseli yalnızca ana yönetici kaydedebilir.')
-        return
-    if not msg.photo:
-        return
+    tenant_id = current_tenant_id(user.id, context)
+    if not tenant_id or not manager_has_permission(user.id, tenant_id, None, 'settings'):
+        await msg.reply_text('Bu müşteri için görsel ayarı yetkin yok.'); return
+    if not msg.photo: return
     file_id = msg.photo[-1].file_id
     with connect() as c:
-        for tenant_key in ('altay_demo', 'altay_demo'):
-            c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
-                VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
-                setting_value=excluded.setting_value, updated_at=excluded.updated_at""",
-                (tenant_key, 'site_photo_file_id', file_id, now().isoformat()))
+        c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+            VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+            setting_value=excluded.setting_value, updated_at=excluded.updated_at""",
+            (tenant_id, 'site_photo_file_id', file_id, now().isoformat()))
     await msg.reply_text('✅ SITE tanıtım görseli kaydedildi. Bundan sonra SITE veya SİTE yazıldığında görsel ve bağlantı butonları birlikte paylaşılacak.')
 
 async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2343,7 +2341,7 @@ async def recurring_announcement_add(update: Update, context: ContextTypes.DEFAU
 async def recurring_announcement_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
     with connect() as conn:
-        rows=conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements ORDER BY send_time").fetchall()
+        rows=conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements WHERE tenant_id='legacy_single' ORDER BY send_time").fetchall()
     lines=["📣 OTOMATİK DUYURULAR"]+[f"#{r['announcement_id']} — {r['send_time']} — {'Aktif' if r['enabled'] else 'Kapalı'}\n{r['message'][:150]}" for r in rows]
     await update.effective_message.reply_text("\n\n".join(lines)[:4000] if rows else "Otomatik duyuru yok.")
 
@@ -2352,7 +2350,7 @@ async def recurring_announcement_delete(update: Update, context: ContextTypes.DE
     if len(context.args)!=1 or not context.args[0].isdigit():
         await update.effective_message.reply_text("Kullanım: /otomatikduyurusil ID"); return
     aid=int(context.args[0])
-    with connect() as conn: cur=conn.execute("DELETE FROM recurring_announcements WHERE announcement_id=?",(aid,))
+    with connect() as conn: cur=conn.execute("DELETE FROM recurring_announcements WHERE announcement_id=? AND tenant_id='legacy_single'",(aid,))
     log_admin_action(update.effective_user.id,"Otomatik duyuru silindi",None,f"#{aid}")
     await update.effective_message.reply_text("Duyuru silindi." if cur.rowcount else "Duyuru bulunamadı.")
 
