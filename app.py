@@ -243,6 +243,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
+        [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
@@ -792,6 +793,33 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
             ]
         ))
+
+    elif q.data == "tenantpanel:revenue":
+        current = now()
+        day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        with connect() as conn:
+            day = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+                FROM membership_payments WHERE paid_at>=?""", (day_start,)).fetchone()
+            month = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+                FROM membership_payments WHERE paid_at>=?""", (month_start,)).fetchone()
+            all_time = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+                FROM membership_payments""").fetchone()
+            monthly = conn.execute("""SELECT substr(paid_at,1,7) AS period,
+                COUNT(*) AS count,SUM(amount) AS total FROM membership_payments
+                GROUP BY substr(paid_at,1,7) ORDER BY period DESC LIMIT 6""").fetchall()
+        lines = [
+            "📈 GELİR İSTATİSTİKLERİ", "",
+            f"Bugün: {day[1]:,.2f} TL ({day[0]} ödeme)",
+            f"Bu ay: {month[1]:,.2f} TL ({month[0]} ödeme)",
+            f"Genel toplam: {all_time[1]:,.2f} TL ({all_time[0]} ödeme)",
+            "", "Son 6 ay:"
+        ]
+        for item in monthly:
+            lines.append(f"• {item['period']}: {item['total']:,.2f} TL ({item['count']} ödeme)")
+        if not monthly:
+            lines.append("Henüz ödeme kaydı bulunmuyor.")
+        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:payments":
         with connect() as conn:
