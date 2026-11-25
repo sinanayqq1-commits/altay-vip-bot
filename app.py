@@ -416,6 +416,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise ValueError("unknown channel")
             tenant_id = channel_row[0]
             with connect() as c:
+                active_membership = c.execute("""SELECT expires_at FROM tenant_memberships
+                    WHERE tenant_id=? AND user_id=? AND status='active'
+                    ORDER BY expires_at DESC LIMIT 1""", (tenant_id, user.id)).fetchone()
+                if active_membership and datetime.fromisoformat(active_membership["expires_at"]) > now():
+                    await update.message.reply_text(
+                        f"Zaten aktif VIP üyeliğin var. Bitiş: {datetime.fromisoformat(active_membership['expires_at']):%d.%m.%Y %H:%M}"
+                    )
+                    return
                 existing = c.execute("""SELECT application_id,status FROM tenant_applications
                     WHERE tenant_id=? AND channel_id=? AND user_id=?
                     ORDER BY application_id DESC LIMIT 1""",
@@ -2751,7 +2759,9 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         try:
             invite = await context.bot.create_chat_invite_link(
                 chat_id=vip_channel_id,
-                name=f"GOLDEN-VIP-{user_id}"
+                name=f"GOLDEN-VIP-{user_id}",
+                member_limit=1,
+                expire_date=now() + timedelta(days=2)
             )
         except Exception:
             log.exception("VIP davet bağlantısı oluşturulamadı")
