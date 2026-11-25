@@ -499,7 +499,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         input_field_placeholder="Menüyü açmak için butona dokun"
     )
     if admin(user.id):
-        msg = f"🛡 GOLDEN VIP — ANA YÖNETİCİ\n\nHoş geldin {user.first_name}!\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
+        msg = f"🛡 MEDYAECAN — ANA YÖNETİCİ\n\nHoş geldin {user.first_name}!\nTüm müşteri ve kanal işlemlerini bu panelden yönetebilirsin."
         rows = [[InlineKeyboardButton("🛠 Ana Yönetim Panelini Aç", callback_data="home:admin")]]
     elif tenant_permissions(user.id):
         permissions = tenant_permissions(user.id)
@@ -586,7 +586,7 @@ async def home_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if can_open_admin_panel(uid):
             rows.append([InlineKeyboardButton("🛡 Yönetim Panelini Aç", callback_data="home:admin")])
         await q.message.reply_text(
-            f"👑 GOLDEN VIP BOT — ANA MENÜ\n\nHoş geldin {q.from_user.first_name}!\n{status_line}\n\nBir işlem seç:",
+            f"👑 MEDYAECAN — ANA MENÜ\n\nHoş geldin {q.from_user.first_name}!\n{status_line}\n\nBir işlem seç:",
             reply_markup=InlineKeyboardMarkup(rows)
         )
     elif q.data == "home:admin":
@@ -594,7 +594,7 @@ async def home_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.answer("Bu panel için yönetici yetkin bulunmuyor.", show_alert=True)
             return
         if admin(uid):
-            await q.message.reply_text("🛠 GOLDEN VIP BOT — ANA YÖNETİCİ PANELİ", reply_markup=admin_panel_keyboard())
+            await q.message.reply_text("🛠 MEDYAECAN — ANA YÖNETİCİ PANELİ", reply_markup=admin_panel_keyboard())
         else:
             tid = current_tenant_id(uid, context)
             if not tid:
@@ -687,7 +687,7 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('🏢 MÜŞTERİ YÖNETİM PANELİ\n\nYalnızca yetkili olduğun müşterinin kayıtlarını yönetebilirsin.', reply_markup=tenant_panel_keyboard())
         return
     await update.message.reply_text(
-        "🛠 ALTAY VIP BOT — YÖNETİCİ PANELİ\n\n"
+        "🛠 MEDYAECAN — YÖNETİCİ PANELİ\n\n"
         "VIP üyeleri ve bekleyen başvuruları buradan yönetebilirsin.\n"
         "Müşteri/kanal kayıtlarını, yönetici yetkilerini ve sistem durumunu görüntüleyebilirsin.\n"
         "Mevcut üyelik kayıtları korunur; işlemler yetki kontrolüyle yürütülür.",
@@ -1267,7 +1267,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
     if q.data == "tenantpanel:home":
         await q.edit_message_text(
-            "🛠 GOLDEN VIP — YÖNETİM PANELİ\n\nİşlem yapmak için aşağıdan bir bölüm seç.",
+            "🛠 MEDYAECAN — YÖNETİM PANELİ\n\nİşlem yapmak için aşağıdan bir bölüm seç.",
             reply_markup=admin_panel_keyboard()
         )
     elif q.data == "tenantpanel:adminteams":
@@ -2099,7 +2099,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "SELECT COUNT(*) FROM posts WHERE status='sent'"
         ).fetchone()[0]
     await update.message.reply_text(
-        "📊 ALTAY VIP İSTATİSTİK\n\n"
+        "📊 MEDYAECAN İSTATİSTİK\n\n"
         f" Aktif VIP üye: {active}\n"
         f"⏳ Bekleyen başvuru: {pending}\n"
         f"✅ Onaylanan başvuru: {approved}\n"
@@ -3768,7 +3768,7 @@ def main():
     # Tek fotoğraf yönlendiricisi: VIP tanıtım fotoğrafı bekleniyorsa onu, değilse SITE fotoğrafını kaydeder.
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
-    log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
+    log.info("MEDYAECAN - çok kanallı panel aktif.")
     app.run_polling(allowed_updates=["message", "callback_query", "chat_member", "my_chat_member", "chat_join_request"])
 
 
