@@ -1766,7 +1766,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
     tenant_id = application["tenant_id"]
     chat_id = int(application["channel_id"])
     user_id = int(application["user_id"])
-    if not manager_can_access(q.from_user.id, tenant_id, chat_id):
+    if not manager_can_access(q.from_user.id, tenant_id, chat_id) or not manager_has_permission(q.from_user.id, tenant_id, chat_id, "applications"):
         await q.answer("Bu başvuru için yönetici yetkin yok.", show_alert=True)
         return
     if application["status"] != "pending":
@@ -1832,6 +1832,23 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         await q.message.reply_text(f"❌ {user_id} kullanıcısının başvurusu reddedildi.")
     else:
         await q.answer("İşlem tanınmadı.", show_alert=True)
+
+
+def manager_has_permission(uid, tenant_id, cid, permission):
+    if admin(uid): return True
+    with connect() as conn:
+        rows = conn.execute("""SELECT role FROM tenant_admins
+            WHERE tenant_id=? AND user_id=? AND status='active'
+              AND (channel_id=? OR channel_id IS NULL)""",
+            (tenant_id, uid, cid)).fetchall()
+    role_permissions = {
+        "owner": {"members","applications","payments","broadcast","settings"},
+        "manager": {"members","applications","payments","broadcast","settings"},
+        "moderator": {"members","applications"},
+        "finance": {"payments"},
+        "publisher": {"broadcast"},
+    }
+    return any(permission in role_permissions.get(row["role"], set()) for row in rows)
 
 
 def manager_can_access(uid, tenant_id, cid=None):
@@ -2033,9 +2050,15 @@ async def add_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    tenant_id = 'altay_demo'
+    tenant_id = 'legacy_single'
+    with connect() as conn:
+        active_tenant = conn.execute("SELECT 1 FROM tenants WHERE tenant_id=? AND status='active'", (tenant_id,)).fetchone()
+    if not active_tenant: tenant_id = 'altay_demo'
     if not manager_can_access(uid, tenant_id):
         await update.message.reply_text('Bu müşteri için yetkin yok.')
+        return
+    if not manager_has_permission(uid, tenant_id, None, "broadcast"):
+        await update.message.reply_text('Bu işlem için yayın yetkin bulunmuyor.')
         return
     targets = []
     with connect() as c:
