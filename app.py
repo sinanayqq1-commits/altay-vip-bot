@@ -112,6 +112,14 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS tenants(
             tenant_id TEXT PRIMARY KEY, tenant_name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL)""")
+        tenant_columns = {row[1] for row in c.execute("PRAGMA table_info(tenants)").fetchall()}
+        if "plan_name" not in tenant_columns:
+            c.execute("ALTER TABLE tenants ADD COLUMN plan_name TEXT NOT NULL DEFAULT 'legacy'")
+        if "license_status" not in tenant_columns:
+            c.execute("ALTER TABLE tenants ADD COLUMN license_status TEXT NOT NULL DEFAULT 'active'")
+        if "license_expires_at" not in tenant_columns:
+            c.execute("ALTER TABLE tenants ADD COLUMN license_expires_at TEXT")
+
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_channels(
             channel_id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL,
             channel_name TEXT NOT NULL, channel_type TEXT NOT NULL,
@@ -257,8 +265,9 @@ def tenant_permissions(uid):
             JOIN tenants t ON t.tenant_id=a.tenant_id
             LEFT JOIN tenant_channels ch ON ch.channel_id=a.channel_id
             WHERE a.user_id=? AND a.status='active' AND t.status='active'
+              AND t.license_status='active' AND (t.license_expires_at IS NULL OR t.license_expires_at>?)
             ORDER BY t.tenant_name, ch.channel_name
-        """, (uid,)).fetchall()
+        """, (uid, now().isoformat())).fetchall()
 
 
 def tenant_ids_for_user(uid):
@@ -2673,7 +2682,11 @@ async def create_tenant_command(update: Update, context: ContextTypes.DEFAULT_TY
     with connect() as c:
         if c.execute('SELECT 1 FROM tenants WHERE tenant_id=?', (tid,)).fetchone():
             await update.effective_message.reply_text('Bu müşteri zaten kayıtlı: ' + tid); return
-        c.execute('INSERT INTO tenants(tenant_id,tenant_name,status,created_at) VALUES(?,?,\'active\',?)', (tid,name,now().isoformat()))
+        trial_end = now() + timedelta(days=14)
+        c.execute("""INSERT INTO tenants
+            (tenant_id,tenant_name,status,created_at,plan_name,license_status,license_expires_at)
+            VALUES(?,?,'active',?,'deneme','active',?)""",
+            (tid,name,now().isoformat(),trial_end.isoformat()))
         c.execute('INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at) VALUES(?,?,\'owner\',NULL,\'active\',?)', (tid,owner_id,now().isoformat()))
     log_admin_action(update.effective_user.id,'Müşteri oluşturuldu',owner_id,f'{name}; {tid}')
     await update.effective_message.reply_text(f'✅ Müşteri oluşturuldu.\nAd: {name}\nMüşteri kodu: {tid}\nSahip ID: {owner_id}\nSahip /admin ile paneli açabilir.')
@@ -2956,6 +2969,11 @@ def manager_can_access(uid, tenant_id, cid=None):
     if admin(uid):
         return True
     with connect() as c:
+        license = c.execute("""SELECT 1 FROM tenants WHERE tenant_id=? AND status='active'
+            AND license_status='active' AND (license_expires_at IS NULL OR license_expires_at>?)""",
+            (tenant_id, now().isoformat())).fetchone()
+        if not license:
+            return False
         if cid is None:
             row = c.execute("""SELECT 1 FROM tenant_admins WHERE tenant_id=? AND user_id=?
                 AND status='active' LIMIT 1""", (tenant_id, uid)).fetchone()
