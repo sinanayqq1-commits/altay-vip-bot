@@ -497,19 +497,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for package_key in ("starter", "professional", "vip"):
             package = PLAN_CATALOG[package_key]
             package_lines.append(
-                f"📦 {package['name']} — {package['price']:,} TL / ay\\n"
-                f"   • {package['channels']} kanal / grup\\n"
+                f"📦 {package['name']} — {package['price']:,} TL / ay\n"
+                f"   • {package['channels']} kanal / grup\n"
                 f"   • {package['team']} ekip kullanıcısı"
             )
         sales_kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("💬 Satış ekibiyle görüş", callback_data="support")
         ]])
         await update.effective_message.reply_text(
-            "🧡 MEDYAECAN | YAZILIM & OTOMASYON\\n\\n"
-            "İşletmenize özel Telegram botları ve profesyonel yönetim panelleri.\\n\\n"
-            "SATIŞ PAKETLERİMİZ\\n\\n"
-            + "\\n\\n".join(package_lines)
-            + "\\n\\nPaket seçimi, demo ve kurulum için satış ekibimize ulaşın.",
+            "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\n"
+            "İşletmenize özel Telegram botları ve profesyonel yönetim panelleri.\n\n"
+            "SATIŞ PAKETLERİMİZ\n\n"
+            + "\n\n".join(package_lines)
+            + "\n\nPaket seçimi, demo ve kurulum için satış ekibimize ulaşın.",
             reply_markup=sales_kb
         )
         return
