@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReplyKeyboardMarkup, KeyboardButton
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler, MessageHandler, filters
 )
@@ -1022,7 +1023,15 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         ]
         if not rows:
             lines.append('Henüz erişimin olan aktif kanal kaydedilmemiş.')
-        await q.edit_message_text("\n".join(lines), reply_markup=tenant_panel_keyboard())
+        panel_text = "\n".join(lines)
+        try:
+            await q.edit_message_text(panel_text, reply_markup=tenant_panel_keyboard())
+        except BadRequest as exc:
+            # Telegram rejects editing when text and buttons are already identical.
+            if "Message is not modified" in str(exc):
+                await q.message.reply_text(panel_text, reply_markup=tenant_panel_keyboard())
+            else:
+                raise
 
     elif q.data == 'tenantpanel:members':
         if not manager_has_permission(uid, tid, None, 'members'):
