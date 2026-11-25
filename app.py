@@ -2628,8 +2628,8 @@ def main():
     app.add_handler(CommandHandler("tanitimac", set_promo_setting))
     app.add_handler(CommandHandler("tanitimkapat", set_promo_setting))
     app.add_handler(CommandHandler("tanitimfoto", request_promo_photo))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_promo_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, payment_input_router))
+    # Tek fotoğraf yönlendiricisi: VIP tanıtım fotoğrafı bekleniyorsa onu, değilse SITE fotoğrafını kaydeder.
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
