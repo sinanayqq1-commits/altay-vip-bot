@@ -574,6 +574,91 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await q.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+    elif q.data.startswith("tenantpanel:extend:ask:"):
+        parts = q.data.split(":")
+        try:
+            kind = parts[3]
+            if kind == "legacy" and len(parts) == 6:
+                member_id, days = int(parts[4]), int(parts[5])
+                scope = f"legacy:{member_id}"
+                with connect() as conn:
+                    row = conn.execute("SELECT expires_at,status FROM memberships WHERE user_id=?", (member_id,)).fetchone()
+                label = "GOLDEN VIP"
+            elif kind == "tenant" and len(parts) == 7:
+                channel_value, member_id, days = int(parts[4]), int(parts[5]), int(parts[6])
+                scope = f"tenant:{channel_value}:{member_id}"
+                with connect() as conn:
+                    row = conn.execute("""SELECT tm.expires_at,tm.status,tc.channel_name
+                        FROM tenant_memberships tm LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
+                        WHERE tm.channel_id=? AND tm.user_id=?""", (channel_value, member_id)).fetchone()
+                label = row["channel_name"] if row else "VIP kanal"
+            else:
+                raise ValueError()
+            if days not in (30, 60, 90) or not row or row["status"] != "active" or datetime.fromisoformat(row["expires_at"]) <= now():
+                await q.answer("Bu üyelik artık uzatılamıyor. Listeyi yenile.", show_alert=True)
+                return
+        except (ValueError, IndexError, TypeError):
+            await q.answer("Üyelik bilgisi geçersiz.", show_alert=True)
+            return
+        await q.edit_message_text(
+            f"⚠️ ÜYELİK UZATMA ONAYI\\n\\nÜye ID: {member_id}\\nKanal: {label}\\n"
+            f"Uzatma: {days} gün\\nMevcut bitiş: {datetime.fromisoformat(row['expires_at']):%d.%m.%Y %H:%M}\\n\\n"
+            "Onaylıyor musun? Onay vermeden üyelik süresi değişmez.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Evet, uzat", callback_data=f"tenantpanel:extend:do:{scope}:{days}")],
+                [InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:memberdetail:{kind}:{scope.split(':',1)[1]}")],
+                [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
+            ])
+        )
+
+    elif q.data.startswith("tenantpanel:extend:do:"):
+        parts = q.data.split(":")
+        try:
+            kind = parts[3]
+            if kind == "legacy" and len(parts) == 6:
+                member_id, days = int(parts[4]), int(parts[5])
+                with connect() as conn:
+                    row = conn.execute("SELECT expires_at,status FROM memberships WHERE user_id=?", (member_id,)).fetchone()
+                    if not row or row["status"] != "active":
+                        raise ValueError()
+                    until = max(datetime.fromisoformat(row["expires_at"]), now()) + timedelta(days=days)
+                    conn.execute("UPDATE memberships SET expires_at=? WHERE user_id=? AND status='active'", (until.isoformat(), member_id))
+                label = "GOLDEN VIP"
+                back = f"tenantpanel:memberdetail:legacy:{member_id}"
+            elif kind == "tenant" and len(parts) == 7:
+                channel_value, member_id, days = int(parts[4]), int(parts[5]), int(parts[6])
+                with connect() as conn:
+                    row = conn.execute("""SELECT expires_at,status FROM tenant_memberships
+                        WHERE channel_id=? AND user_id=?""", (channel_value, member_id)).fetchone()
+                    if not row or row["status"] != "active":
+                        raise ValueError()
+                    until = max(datetime.fromisoformat(row["expires_at"]), now()) + timedelta(days=days)
+                    conn.execute("""UPDATE tenant_memberships SET expires_at=?
+                        WHERE channel_id=? AND user_id=? AND status='active'""", (until.isoformat(), channel_value, member_id))
+                    channel = conn.execute("SELECT channel_name FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
+                label = channel["channel_name"] if channel else "VIP kanal"
+                back = f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}"
+            else:
+                raise ValueError()
+            if days not in (30, 60, 90):
+                raise ValueError()
+        except (ValueError, IndexError, TypeError):
+            await q.answer("Üyelik uzatılamadı; kayıt aktif olmayabilir.", show_alert=True)
+            return
+        try:
+            await context.bot.send_message(member_id, f"🎉 VIP üyeliğin {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}")
+        except Exception:
+            log.info("Üyelik uzatma bildirimi gönderilemedi: %s", member_id)
+        await q.answer("Üyelik süresi güncellendi.")
+        await q.edit_message_text(
+            f"✅ ÜYELİK UZATILDI\\n\\nÜye ID: {member_id}\\nKanal: {label}\\n"
+            f"Eklenen süre: {days} gün\\nYeni bitiş: {until:%d.%m.%Y %H:%M}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👤 Üye detayına dön", callback_data=back)],
+                [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")]
+            ])
+        )
+
     elif q.data.startswith("tenantpanel:memberdetail:"):
         parts = q.data.split(":")
         if len(parts) == 4 and parts[2] == "legacy":
@@ -631,10 +716,18 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Geçersiz üye kaydı.", show_alert=True)
             return
         detail_text += "\n\nNot: Üyelik başlangıç tarihi mevcut veritabanında tutulmuyor."
-        await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
-            [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
-        ]))
+        extend_kind = "legacy" if len(parts) == 4 else "tenant"
+        extend_scope = f"{member_id}" if extend_kind == "legacy" else f"{channel_value}:{member_id}"
+        extend_buttons = [
+            [InlineKeyboardButton(f"➕ {days} gün uzat", callback_data=f"tenantpanel:extend:ask:{extend_kind}:{extend_scope}:{days}")]
+            for days in (30, 60, 90)
+        ]
+        await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup(
+            extend_buttons + [
+                [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
+                [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
+            ]
+        ))
 
     elif q.data == "tenantpanel:expiring":
         current_dt = now()
