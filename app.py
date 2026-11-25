@@ -66,7 +66,12 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_channels(
             channel_id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL,
             channel_name TEXT NOT NULL, channel_type TEXT NOT NULL,
-            owner_user_id INTEGER, status TEXT NOT NULL DEFAULT 'active')""")
+            owner_user_id INTEGER, owner_username TEXT, status TEXT NOT NULL DEFAULT 'active')""")
+        # Eski veritabanları için kanal sahibinin kullanıcı adı alanını ekle.
+        channel_columns = {row[1] for row in c.execute("PRAGMA table_info(tenant_channels)").fetchall()}
+        if "owner_username" not in channel_columns:
+            c.execute("ALTER TABLE tenant_channels ADD COLUMN owner_username TEXT")
+
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_admins(
             tenant_id TEXT NOT NULL, user_id INTEGER NOT NULL,
             role TEXT NOT NULL, channel_id INTEGER,
@@ -424,12 +429,17 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
     if q.data == "tenantpanel:channels":
         if admin(uid):
             with connect() as c:
+                # Paneli açan ana yöneticinin Telegram kullanıcı adını kanala bağla.
+                if q.from_user.username:
+                    c.execute("""UPDATE tenant_channels SET owner_username=?
+                        WHERE owner_user_id=? AND tenant_id='legacy_single'""",
+                        (q.from_user.username, uid))
                 tenants = c.execute(
                     "SELECT tenant_id,tenant_name,status FROM tenants WHERE status='active' ORDER BY tenant_name"
                 ).fetchall()
                 channels = c.execute("""
                     SELECT t.tenant_name, ch.channel_name, ch.channel_id,
-                           ch.channel_type, ch.owner_user_id
+                           ch.channel_type, ch.owner_user_id, ch.owner_username
                     FROM tenant_channels ch
                     JOIN tenants t ON t.tenant_id=ch.tenant_id
                     WHERE t.status='active' AND ch.status='active'
@@ -440,7 +450,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines += ["", "📡 KANALLAR"]
             lines += [
                 f"• {r['tenant_name']} / {r['channel_name']}\n"
-                f"  ID: {r['channel_id']} | Tür: {r['channel_type']} | Kurucu ID: {r['owner_user_id']}"
+                f"  Kanal ID: {r['channel_id']} | Tür: {r['channel_type']}\n"
+                f"  Kurucu ID: {r['owner_user_id'] or '—'} | Kullanıcı adı: "
+                f"@{r['owner_username']}" if r['owner_username'] else
+                f"  Kanal ID: {r['channel_id']} | Tür: {r['channel_type']}\n"
+                f"  Kurucu ID: {r['owner_user_id'] or '—'} | Kullanıcı adı: kayıtlı değil"
                 for r in channels
             ]
         else:
