@@ -1824,13 +1824,13 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         existing = c.execute('SELECT tenant_id FROM tenant_channels WHERE channel_id=?', (target_chat.id,)).fetchone()
         if existing and existing['tenant_id'] != tenant_id:
             await msg.reply_text('⛔ Bu kanal başka bir müşteriye kayıtlı. Güvenlik için taşınmadı.'); return
-        c.execute(\"\"\"INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+        c.execute("""INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,'active') ON CONFLICT(channel_id) DO UPDATE SET
             channel_name=excluded.channel_name, channel_type=excluded.channel_type,
-            owner_user_id=COALESCE(tenant_channels.owner_user_id,excluded.owner_user_id), status='active'\"\"\",
+            owner_user_id=COALESCE(tenant_channels.owner_user_id,excluded.owner_user_id), status='active'""",
             (target_chat.id, tenant_id, 'GOLDEN CLUB SOHBET' if role == 'sohbet' else names[role], 'chat' if role == 'sohbet' else role, user.id))
-        c.execute(\"\"\"INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
-            VALUES(?,?,'owner',NULL,'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'\"\"\",
+        c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
+            VALUES(?,?,'owner',NULL,'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'""",
             (tenant_id,user.id,now().isoformat()))
     await msg.reply_text(f"✅ {names[role]} kaydedildi.\nTelegram ID: {target_chat.id}\nBotun kanalda yönetici olduğundan emin ol.")
 
