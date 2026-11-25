@@ -683,7 +683,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         except (ValueError, IndexError, TypeError):
             await q.answer("Üye bilgisi geçersiz.", show_alert=True); return
         await q.edit_message_text(
-            f"💳 ÖDEME KAYDI\\n\\nÜye ID: {member_id}\\nÖdeme tutarını TL olarak yaz. İstersen sonuna açıklama ekle.\\nÖrnek: 1500 Aylık VIP",
+            f"💳 ÖDEME KAYDI\n\nÜye ID: {member_id}\nÖdeme tutarını TL olarak yaz. İstersen sonuna açıklama ekle.\nÖrnek: 1500 Aylık VIP",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:memberdetail:{kind}:{member_id}" if kind=="legacy" else f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}")]])
         )
 
@@ -713,7 +713,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 lines.append(f"• {p['amount']:,.2f} TL — {when:%d.%m.%Y %H:%M}"+(f" ({p['note']})" if p["note"] else ""))
             if not rows: lines.append("Bu üyeye ait ödeme kaydı yok.")
             back=f"tenantpanel:memberdetail:{kind}:{member_id}" if kind=="legacy" else f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}"
-            await q.edit_message_text("\\n".join(lines)[:4000],reply_markup=InlineKeyboardMarkup([
+            await q.edit_message_text("\n".join(lines)[:4000],reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Üye detayına dön",callback_data=back)],
                 [InlineKeyboardButton("🏠 Ana panel",callback_data="tenantpanel:home")]
             ]))
@@ -805,7 +805,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines.append(f"• ID {p['user_id']} | {p['amount']:,.2f} TL | {when:%d.%m.%Y}{note}")
         if not recent:
             lines.append("Henüz ödeme kaydı yok.")
-        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:expiring":
         current_dt = now()
@@ -1682,8 +1682,8 @@ async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYP
              amount,note,now().isoformat(),update.effective_user.id))
     context.user_data.pop("pending_payment",None)
     await update.effective_message.reply_text(
-        f"✅ Ödeme kaydedildi.\\nÜye ID: {pending['user_id']}\\nTutar: {amount:,.2f} TL"
-        + (f"\\nAçıklama: {note}" if note else "")
+        f"✅ Ödeme kaydedildi.\nÜye ID: {pending['user_id']}\nTutar: {amount:,.2f} TL"
+        + (f"\nAçıklama: {note}" if note else "")
     )
 
 
