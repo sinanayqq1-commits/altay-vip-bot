@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler
 )
 
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -333,10 +333,9 @@ async def approve(context, uid, days=30):
     link = ""
     try:
         inv = await context.bot.create_chat_invite_link(
-            chat_id=channel_id(), member_limit=1,
-            expire_date=now()+timedelta(hours=24), name=f"VIP-{uid}"
+            chat_id=channel_id(), creates_join_request=True, name=f"GOLDEN-VIP-{uid}"
         )
-        link = "\n\nKanala katılım bağlantın (24 saat geçerli):\n" + inv.invite_link
+        link = "\n\nVIP kanala özel katılım bağlantın (süresiz; giriş yönetici onayına tabidir):\n" + inv.invite_link
     except Exception:
         log.exception("Davet bağlantısı oluşturulamadı")
         link = "\n\nDavet bağlantısı oluşturulamadı. Yöneticiyle iletişime geç."
@@ -917,6 +916,37 @@ async def expire_tenant_memberships(context: ContextTypes.DEFAULT_TYPE):
             log.info('Süre bitiş bildirimi kullanıcıya gönderilemedi: %s', row['user_id'])
 
 
+async def handle_vip_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Approve join requests only for users with an active, unexpired VIP membership."""
+    req = update.chat_join_request
+    if not req:
+        return
+    chat_id = int(req.chat.id)
+    user_id = int(req.from_user.id)
+    current = now().isoformat()
+    with connect() as c:
+        tenant_ok = c.execute("""SELECT 1 FROM tenant_memberships
+            WHERE channel_id=? AND user_id=? AND status='active' AND expires_at>?
+            LIMIT 1""", (chat_id, user_id, current)).fetchone()
+        legacy_ok = None
+        if CHANNEL_ID and str(chat_id) == str(CHANNEL_ID):
+            legacy_ok = c.execute("""SELECT 1 FROM memberships
+                WHERE user_id=? AND status='active' AND expires_at>? LIMIT 1""",
+                (user_id, current)).fetchone()
+    if tenant_ok or legacy_ok:
+        try:
+            await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+            log.info("VIP katılım isteği onaylandı: chat=%s user=%s", chat_id, user_id)
+        except Exception:
+            log.exception("VIP katılım isteği onaylanamadı: chat=%s user=%s", chat_id, user_id)
+    else:
+        try:
+            await context.bot.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
+            log.info("Yetkisiz VIP katılım isteği reddedildi: chat=%s user=%s", chat_id, user_id)
+        except Exception:
+            log.exception("Yetkisiz VIP katılım isteği reddedilemedi: chat=%s user=%s", chat_id, user_id)
+
+
 async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reject re-entry to registered VIP channels without a current active membership."""
     cm = update.chat_member
@@ -1126,9 +1156,8 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         try:
             invite = await context.bot.create_chat_invite_link(
                 chat_id=vip_channel_id,
-                member_limit=1,
-                expire_date=now() + timedelta(hours=24),
-                name=f"ALTAY-VIP-{user_id}"
+                creates_join_request=True,
+                name=f"GOLDEN-VIP-{user_id}"
             )
         except Exception:
             log.exception("VIP davet bağlantısı oluşturulamadı")
@@ -1146,7 +1175,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
             await context.bot.send_message(
                 user_id,
                 f"🎉 VIP başvurun onaylandı!\nÜyelik süren: 30 gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
-                f"VIP kanalına katılım bağlantın (24 saat geçerli, tek kullanımlık):\n{invite.invite_link}"
+                f"VIP kanalına özel katılım bağlantın (süresiz; giriş üyelik kontrolünden sonra onaylanır):\n{invite.invite_link}"
             )
         except Exception:
             log.exception("Onaylanan kullanıcıya VIP daveti gönderilemedi: %s", user_id)
@@ -1405,6 +1434,7 @@ def main():
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
     app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(ChatMemberHandler(enforce_vip_membership, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(ChatJoinRequestHandler(handle_vip_join_request))
     app.add_handler(CommandHandler("admin", panel))
     app.add_handler(CommandHandler("uyeler", members))
     app.add_handler(CommandHandler("onayla", grant))
@@ -1425,7 +1455,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
-    app.run_polling(allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"])
+    app.run_polling(allowed_updates=["message", "callback_query", "chat_member", "my_chat_member", "chat_join_request"])
 
 
 if __name__ == "__main__":
