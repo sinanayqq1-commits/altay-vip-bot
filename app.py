@@ -2225,9 +2225,12 @@ async def tenant_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ).fetchall()
         else:
             # Channel managers may publish only to channels explicitly assigned to them.
-            rows = c.execute("""SELECT DISTINCT channel_id FROM tenant_admins
-                WHERE tenant_id=? AND user_id=? AND status='active'
-                AND channel_id IS NOT NULL ORDER BY channel_id""", (tenant_id, uid)).fetchall()
+            rows = c.execute("""SELECT channel_id FROM tenant_channels
+                WHERE tenant_id=? AND status='active' AND EXISTS (
+                    SELECT 1 FROM tenant_admins a WHERE a.tenant_id=tenant_channels.tenant_id
+                    AND a.user_id=? AND a.status='active'
+                    AND (a.channel_id IS NULL OR a.channel_id=tenant_channels.channel_id)
+                ) ORDER BY channel_id""", (tenant_id, uid)).fetchall()
         targets = [int(r[0]) for r in rows]
     if not targets:
         await update.message.reply_text('Aktif kanal bulunamadı.')
