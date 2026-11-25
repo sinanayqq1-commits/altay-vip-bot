@@ -249,11 +249,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         if bot_username:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🤖 VIP işlemlerini özelden aç",
+                "💎 GOLDEN VIP başvurusu",
                 url=f"https://t.me/{bot_username}?start=vipc_{chat.id}"
             )]])
             await update.effective_message.reply_text(
-                "VIP başvurusu ve üyelik işlemleri özel mesajdan yapılır. Aşağıdaki butona bas.",
+                "👑 GOLDEN VIP BAŞVURUSU\n\nVIP üyelik başvurunu başlatmak ve üyelik işlemlerini yapmak için aşağıdaki butona bas. Başvuru özel mesaj üzerinden alınır.",
                 reply_markup=kb
             )
         return
