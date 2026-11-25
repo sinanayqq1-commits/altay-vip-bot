@@ -2635,23 +2635,38 @@ async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
                         continue
                 except ValueError:
                     pass
-            brand = (tenant["tenant_name"] or "VIP").strip()[:60]
-            promo_text = settings.get("promo_text") or (
-                f"👑 {brand} | VIP ÜYELİK\n\n"
-                "⚽ Özel içerikler ve düzenli paylaşımlar\n"
-                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\n\n"
-                "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
+            brand = (tenant["tenant_name"] or "MEDYAECAN").strip()[:60]
+            promo_text = (
+                f"🧡 {brand} | YAZILIM & OTOMASYON\n\n"
+                "🤖 Telegram botları ve VIP kanal yönetim sistemleri\n"
+                "⚙️ İşletmelere özel otomasyon çözümleri\n\n"
+                "📦 SATIŞ PAKETLERİMİZİ VE FİYATLARIMIZI GÖRMEK İÇİN BUTONA DOKUN."
             )
-            button_text = settings.get("promo_button") or "💎 VIP başvurusu"
+            button_text = "🧡 Paketleri ve fiyatları gör"
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                button_text[:60], url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+                button_text, url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
-                await context.bot.send_photo(chat_id=group_id, photo=photo_id,
+                sent_message = await context.bot.send_photo(chat_id=group_id, photo=photo_id,
                                               caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb)
             else:
-                await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
+                sent_message = await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
+            # Yeni MEDYAECAN tanıtımını sabitle; eski VIP tanıtımını yalnızca sabitten kaldır.
+            try:
+                chat_info = await context.bot.get_chat(group_id)
+                pinned = chat_info.pinned_message
+                if pinned and (
+                    "VIP" in (pinned.text or "").upper()
+                    or "VIP" in (pinned.caption or "").upper()
+                    or "BAŞVURULARINIZI BEKLİYORUZ" in (pinned.text or "").upper()
+                ):
+                    await context.bot.unpin_chat_message(chat_id=group_id, message_id=pinned.message_id)
+                await context.bot.pin_chat_message(
+                    chat_id=group_id, message_id=sent_message.message_id, disable_notification=True
+                )
+            except Exception:
+                log.exception("MEDYAECAN tanıtımı sabitlenemedi: group=%s", group_id)
             with connect() as c:
                 c.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
                     VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
