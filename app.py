@@ -1434,6 +1434,82 @@ async def send_membership_reminders(context: ContextTypes.DEFAULT_TYPE):
                     (kind, tenant_id, chat_id, uid, reminder_day, current.isoformat()))
 
 
+async def create_database_backup(context, notify=True):
+    """Create a consistent SQLite backup and deliver it privately to configured admins."""
+    stamp = now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join("/tmp", f"golden_vip_backup_{stamp}.sqlite3")
+    source = None
+    target = None
+    try:
+        source = sqlite3.connect(DB, timeout=30)
+        target = sqlite3.connect(backup_path)
+        source.backup(target)
+        target.close()
+        target = None
+        source.close()
+        source = None
+        sent = 0
+        for admin_id in ADMIN_IDS:
+            try:
+                with open(backup_path, "rb") as backup_file:
+                    await context.bot.send_document(
+                        chat_id=admin_id,
+                        document=backup_file,
+                        filename=f"GOLDEN_VIP_YEDEK_{stamp}.sqlite3",
+                        caption=f"🔐 GOLDEN VIP veritabanı yedeği\\nTarih: {now():%d.%m.%Y %H:%M}\\nBu dosyayı güvenli bir yerde sakla."
+                    )
+                sent += 1
+            except Exception:
+                log.exception("Veritabanı yedeği yöneticiye gönderilemedi: %s", admin_id)
+        if notify and sent == 0:
+            log.error("Veritabanı yedeği oluşturuldu ancak hiçbir yöneticiye gönderilemedi.")
+        return sent
+    except Exception:
+        log.exception("Veritabanı yedeği oluşturulamadı.")
+        if notify:
+            for admin_id in ADMIN_IDS:
+                try:
+                    await context.bot.send_message(admin_id, "⚠️ GOLDEN VIP veritabanı yedeği oluşturulamadı. Railway loglarını kontrol et.")
+                except Exception:
+                    pass
+        return 0
+    finally:
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
+        try:
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+        except OSError:
+            log.exception("Geçici yedek dosyası silinemedi.")
+
+
+async def manual_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only(update):
+        return
+    await update.effective_message.reply_text("🔐 Veritabanı yedeği hazırlanıyor...")
+    sent = await create_database_backup(context, notify=False)
+    await update.effective_message.reply_text(
+        f"✅ Yedek {sent} yöneticiye özel mesaj olarak gönderildi."
+        if sent else
+        "⚠️ Yedek oluşturulamadı veya yöneticiye gönderilemedi. Botun özel mesajlarını ve Railway loglarını kontrol et."
+    )
+
+
+async def application_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    log.error("Telegram uygulama hatası", exc_info=context.error)
+    error_name = type(context.error).__name__ if context.error else "UnknownError"
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(
+                admin_id,
+                f"⚠️ GOLDEN VIP botunda bir işlem hatası oluştu.\\nTür: {error_name}\\nAyrıntı için Railway loglarını kontrol et."
+            )
+        except Exception:
+            log.exception("Hata bildirimi yöneticiye gönderilemedi: %s", admin_id)
+
+
 async def post_init(app):
     with connect() as c:
         rows = c.execute(
@@ -1449,6 +1525,7 @@ async def post_init(app):
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
     app.job_queue.run_repeating(send_membership_reminders, interval=21600, first=60, name="membership-reminders")
     app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=0, name="golden-group-promo")
+    app.job_queue.run_daily(create_database_backup, time=datetime.strptime("03:00", "%H:%M").time().replace(tzinfo=TZ), name="daily-database-backup")
 
 
 
@@ -1876,6 +1953,7 @@ def main():
         raise RuntimeError("ADMIN_IDS ayarlanmamış.")
     init_db()
     app = Application.builder().token(TOKEN).post_init(post_init).build()
+    app.add_error_handler(application_error_handler)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("kimim", whoami))
@@ -1889,6 +1967,7 @@ def main():
     app.add_handler(CommandHandler("uzat", extend_membership))
     app.add_handler(CommandHandler("sil", remove_member))
     app.add_handler(CommandHandler("istatistik", stats))
+    app.add_handler(CommandHandler("yedekle", manual_backup))
     app.add_handler(CommandHandler("duyuru", broadcast))
     app.add_handler(CommandHandler("planla", plan))
     app.add_handler(CommandHandler("planlar", plans))
