@@ -1586,36 +1586,42 @@ async def send_recurring_announcements(context: ContextTypes.DEFAULT_TYPE):
             log_admin_action(0, "Otomatik duyuru gönderimi", None, f"tenant={row['tenant_id']}; #{row['announcement_id']}; {sent} kanal")
 
 async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
-    """Send a recurring GOLDEN VIP invitation to the registered chat group."""
+    """Send a tenant-isolated VIP invitation to every registered customer chat."""
     with connect() as c:
-        group = c.execute("""SELECT channel_id FROM tenant_channels
-            WHERE tenant_id='legacy_single' AND channel_type='chat' AND status='active'
-            ORDER BY channel_id LIMIT 1""").fetchone()
-    if not group:
-        log.info("GOLDEN VIP sohbet grubu kayıtlı değil; tanıtım atlandı.")
+        groups = c.execute("""SELECT channel_id,tenant_id,channel_name FROM tenant_channels
+            WHERE channel_type='chat' AND status='active'
+            ORDER BY tenant_id,channel_id""").fetchall()
+    if not groups:
+        log.info("Kayıtlı müşteri sohbet grubu yok; VIP tanıtımı atlandı.")
         return
-    group_id = int(group["channel_id"])
-    try:
-        bot_username = (await context.bot.get_me()).username
-        if not bot_username:
-            log.warning("Bot kullanıcı adı alınamadı; grup tanıtımı atlandı.")
-            return
-        text = (
-            "👑 GOLDEN VIP | ÖZEL ANALİZ PLATFORMU\n\n"
-            "⚽ Futbol ve maç gündemine dair değerlendirmeler\n"
-            "📊 İstatistik odaklı karşılaşma analizleri\n"
-            "💎 VIP üyelerine özel içerikler ve düzenli paylaşımlar\n\n"
-            "VIP üyelik başvurusu için aşağıdaki butona dokun.\n"
-            "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
-        )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "💎 GOLDEN VIP başvurusu",
-            url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
-        )]])
-        await context.bot.send_message(chat_id=group_id, text=text, reply_markup=kb)
-        log.info("GOLDEN VIP grup tanıtımı gönderildi: %s", group_id)
-    except Exception:
-        log.exception("GOLDEN VIP grup tanıtımı gönderilemedi: %s", group_id)
+    bot_username = (await context.bot.get_me()).username
+    if not bot_username:
+        log.warning("Bot kullanıcı adı alınamadı; grup tanıtımı atlandı.")
+        return
+    for group in groups:
+        group_id = int(group["channel_id"])
+        try:
+            with connect() as c:
+                tenant = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=? AND status='active'",
+                                   (group["tenant_id"],)).fetchone()
+            if not tenant:
+                continue
+            brand = (tenant["tenant_name"] or "VIP").strip()[:60]
+            text = (
+                f"👑 {brand} | VIP ÜYELİK\n\n"
+                "⚽ Özel içerikler ve düzenli paylaşımlar\n"
+                "💎 VIP üyelik başvurusu için aşağıdaki butona dokun.\n\n"
+                "🔞 18 yaş ve üzeri içindir. Bahis risk içerir; kazanç garantisi yoktur. Sorumlu davranın."
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "💎 VIP başvurusu",
+                url=f"https://t.me/{bot_username}?start=vipc_{group_id}"
+            )]])
+            await context.bot.send_message(chat_id=group_id, text=text, reply_markup=kb)
+            log.info("Müşteri VIP tanıtımı gönderildi: tenant=%s group=%s", group["tenant_id"], group_id)
+        except Exception:
+            log.exception("Müşteri VIP tanıtımı gönderilemedi: tenant=%s group=%s",
+                          group["tenant_id"], group_id)
 
 
 async def send_membership_reminders(context: ContextTypes.DEFAULT_TYPE):
