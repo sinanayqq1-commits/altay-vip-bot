@@ -2780,17 +2780,15 @@ async def customer_team_grant(update: Update, context: ContextTypes.DEFAULT_TYPE
         tid = channel["tenant_id"]
         actor_roles = conn.execute("""SELECT role,channel_id FROM tenant_admins
             WHERE tenant_id=? AND user_id=? AND status='active'""", (tid, uid)).fetchall()
-        target_is_owner = conn.execute("""SELECT 1 FROM tenant_admins
-            WHERE tenant_id=? AND user_id=? AND role='owner' AND status='active'""", (tid, target)).fetchone()
         if not actor_roles or not manager_can_access(uid, tid, cid) or not manager_has_permission(uid, tid, cid, "settings"):
             await update.effective_message.reply_text("Bu kanal üzerinde ekip yönetim yetkin yok.")
             return
-        actor_is_owner = any(r["role"] == "owner" for r in actor_roles)
+        actor_is_owner = any(r["role"] == "owner" and (r["channel_id"] is None or int(r["channel_id"]) == cid) for r in actor_roles)
         if role == "manager" and not actor_is_owner:
             await update.effective_message.reply_text("Manager yetkisini yalnızca müşteri sahibi verebilir.")
             return
-        if target in ADMIN_IDS or target_is_owner:
-            await update.effective_message.reply_text("Ana yönetici veya müşteri sahibi yetkisi değiştirilemez.")
+        if target in ADMIN_IDS or target == uid:
+            await update.effective_message.reply_text("Ana yöneticiye veya kendine ekip yetkisi veremezsin.")
             return
         conn.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
             VALUES(?,?,?,?, 'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id)
