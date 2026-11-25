@@ -610,8 +610,8 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     elif q.data.startswith('tenantpanel:teamrevokeask:'):
         try:
-            _, _, _, channel_value, target = q.data.split(':')
-            channel_value, target = int(channel_value), int(target)
+            parts = q.data.split(':')
+            channel_value, target = int(parts[2]), int(parts[3])
             if scope is not None and channel_value not in scope:
                 raise PermissionError()
             if not manager_has_permission(uid, tid, channel_value, 'settings'):
