@@ -614,7 +614,7 @@ async def members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for r in tenant_rows[:100]:
             expiry = datetime.fromisoformat(r['expires_at'])
             lines.append(
-                (f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok") + "\\n"
+                (f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok") + "\n"
                 + f"  {expiry:%d.%m.%Y %H:%M} — {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or r['channel_id']}"
             )
     if legacy_rows:
