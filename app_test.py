@@ -882,10 +882,12 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
             vip = c.execute("""SELECT channel_id FROM tenant_channels
                 WHERE tenant_id=? AND channel_type='vip' AND status='active'
                 ORDER BY channel_id LIMIT 1""", (tenant_id,)).fetchone()
-        if not vip:
-            await q.answer("Önce VIP yayın kanalını /kanalkaydet vip ile kaydet.", show_alert=True)
+        vip_channel_id = int(vip[0]) if vip else None
+        if vip_channel_id is None and tenant_id == "legacy_single" and CHANNEL_ID:
+            vip_channel_id = channel_id()
+        if vip_channel_id is None:
+            await q.answer("VIP yayın kanalı kaydı bulunamadı. Botun VIP kanalında yönetici olması gerekir.", show_alert=True)
             return
-        vip_channel_id = int(vip[0])
         expires = now() + timedelta(days=30)
         try:
             invite = await context.bot.create_chat_invite_link(
@@ -953,6 +955,30 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not chat or chat.type not in ("group", "supergroup", "channel") or not msg.text:
         return
     channel = tenant_for_channel(chat.id)
+    if not channel and chat.type in ("group", "supergroup"):
+        # If exactly one VIP channel is configured, bind this group's first text
+        # message to that tenant. This avoids requiring an anonymous admin to run
+        # /kanalkaydet sohbet in the group.
+        with connect() as c:
+            vip_tenants = c.execute("""SELECT DISTINCT tenant_id FROM tenant_channels
+                WHERE channel_type='vip' AND status='active'""").fetchall()
+        if len(vip_tenants) == 1:
+            tenant_guess = vip_tenants[0][0]
+        elif len(vip_tenants) == 0 and CHANNEL_ID:
+            # Existing single-channel deployment: CHANNEL_ID is its VIP destination.
+            tenant_guess = "legacy_single"
+        else:
+            tenant_guess = None
+        if tenant_guess:
+            with connect() as c:
+                c.execute("""INSERT OR IGNORE INTO tenants
+                    (tenant_id,tenant_name,status,created_at) VALUES(?,?, 'active',?)""",
+                    (tenant_guess, "ALTAY VIP", now().isoformat()))
+                c.execute("""INSERT INTO tenant_channels
+                    (channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
+                    VALUES(?,?,?,'chat',NULL,'active') ON CONFLICT(channel_id) DO NOTHING""",
+                    (chat.id, tenant_guess, chat.title or "VIP Sohbet Grubu"))
+            channel = tenant_for_channel(chat.id)
     if not channel:
         return
     tenant_id, channel_name, channel_type = channel
@@ -987,8 +1013,9 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # VIP tetikleyicisi: gruba yanıt yazmadan başvuruyu doğrudan yöneticilere özelden bildir.
-    vip_trigger = body.casefold().replace("\u0307", "")
-    if vip_trigger in ("!vip", "vip") and chat.type in ("group", "supergroup") and channel_type == "chat":
+    vip_trigger = "".join(ch for ch in unicodedata.normalize("NFKD", body.casefold())
+                         if not unicodedata.combining(ch)).strip()
+    if vip_trigger in ("!vip", "vip") and chat.type in ("group", "supergroup"):
         user = update.effective_user
         if not user:
             return
@@ -1017,7 +1044,9 @@ async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Grup: {chat.title or chat.id}\n"
             f"Ad: {user.full_name}\n"
             f"Kullanıcı: @{user.username or 'yok'}\n"
-            f"Telegram ID: {user.id}"
+            f"Telegram ID: {user.id}\n"
+            f"Başvuru No: {app_id}\n\n"
+            "Not: Onay sonrası davet bağlantısının özelden iletilebilmesi için üyenin botu önceden /start ile başlatmış olması gerekir."
         )
         sent = False
         for aid in tenant_manager_ids(tenant_id, chat.id):
@@ -1171,7 +1200,7 @@ def main():
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
-    log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
+    log.info("ALTAY VIP ANA SÜRÜM aktif. Grup VIP tetikleyicileri için BotFather /setprivacy = Disable olmalı.")
     app.run_polling()
 
 
