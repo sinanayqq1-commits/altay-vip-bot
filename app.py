@@ -662,7 +662,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
     elif q.data.startswith('tenantpanel:memberdetail:tenant:'):
         parts = q.data.split(':')
         try:
-            channel_value, member_id = int(parts[4]), int(parts[5])
+            channel_value, member_id = int(parts[3]), int(parts[4])
             if scope is not None and channel_value not in scope:
                 raise PermissionError()
             if not manager_has_permission(uid, tid, channel_value, 'members'):
