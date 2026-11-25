@@ -756,6 +756,8 @@ async def remove_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception("Kullanıcı VIP kanalından çıkarılamadı: %s / %s", target, uid)
     removed = removed_count > 0
     changed_count = legacy_cur.rowcount + tenant_cur.rowcount
+    for target in targets:
+        await cleanup_vip_invite_message(context, uid, int(target))
 
     try:
         await context.bot.send_message(
@@ -998,6 +1000,7 @@ async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_T
     if tenant_ok or legacy_ok:
         await cleanup_vip_invite_message(context, user_id, int(chat_id))
         return
+    await cleanup_vip_invite_message(context, user_id, int(chat_id))
     try:
         await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
         await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
