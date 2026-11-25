@@ -2754,7 +2754,7 @@ async def customer_team_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     lines += ["", "Yetki verme: /ekipyetkiver ID rol KANAL_ID",
               "Yetki kaldırma: /ekipyetkikaldir ID KANAL_ID",
               "Roller: manager, moderator, finance, publisher"]
-    await update.effective_message.reply_text("\\n".join(lines)[:4000])
+    await update.effective_message.reply_text("\n".join(lines)[:4000])
 
 
 async def customer_team_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
