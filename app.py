@@ -55,10 +55,21 @@ def init_db():
             user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT,
             status TEXT NOT NULL, created_at TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS memberships(
-            user_id INTEGER PRIMARY KEY, expires_at TEXT NOT NULL, status TEXT NOT NULL)""")
+            user_id INTEGER PRIMARY KEY, expires_at TEXT NOT NULL, status TEXT NOT NULL, username TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS posts(
             job_id TEXT PRIMARY KEY, run_at TEXT NOT NULL, message TEXT NOT NULL,
             status TEXT NOT NULL)""")
+
+        # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
+        membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
+        if "username" not in membership_columns:
+            c.execute("ALTER TABLE memberships ADD COLUMN username TEXT")
+        tenant_membership_columns = {row[1] for row in c.execute("PRAGMA table_info(tenant_memberships)").fetchall()}
+        if "username" not in tenant_membership_columns:
+            c.execute("ALTER TABLE tenant_memberships ADD COLUMN username TEXT")
+        c.execute("""UPDATE memberships SET username=(
+            SELECT NULLIF(username,'') FROM applications WHERE applications.user_id=memberships.user_id
+        ) WHERE username IS NULL""")
 
         c.execute("""CREATE TABLE IF NOT EXISTS tenants(
             tenant_id TEXT PRIMARY KEY, tenant_name TEXT NOT NULL,
@@ -80,7 +91,7 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_memberships(
             tenant_id TEXT NOT NULL, channel_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL, expires_at TEXT NOT NULL,
-            status TEXT NOT NULL,
+            status TEXT NOT NULL, username TEXT,
             PRIMARY KEY(tenant_id,channel_id,user_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_applications(
             application_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,9 +321,12 @@ async def approve(context, uid, days=30):
         raise ValueError("Gün sayısı en az 1 olmalı.")
     until = now() + timedelta(days=days)
     with connect() as c:
-        c.execute("""INSERT INTO memberships(user_id,expires_at,status) VALUES(?,?,'active')
-        ON CONFLICT(user_id) DO UPDATE SET expires_at=excluded.expires_at,status='active'""",
-        (uid, until.isoformat()))
+        app_row = c.execute("SELECT username FROM applications WHERE user_id=?", (uid,)).fetchone()
+        username = (app_row["username"] or "").strip() if app_row else ""
+        c.execute("""INSERT INTO memberships(user_id,expires_at,status,username) VALUES(?,?,'active',?)
+        ON CONFLICT(user_id) DO UPDATE SET expires_at=excluded.expires_at,status='active',
+        username=COALESCE(NULLIF(excluded.username,''),memberships.username)""",
+        (uid, until.isoformat(), username))
         c.execute("UPDATE applications SET status='approved' WHERE user_id=?", (uid,))
     link = ""
     try:
@@ -484,11 +498,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         current = now().isoformat()
         with connect() as c:
             legacy_rows = c.execute("""
-                SELECT user_id,expires_at FROM memberships
+                SELECT user_id,username,expires_at FROM memberships
                 WHERE status='active' AND expires_at>? ORDER BY expires_at LIMIT 25
             """, (current,)).fetchall()
             tenant_rows = c.execute("""
-                SELECT tm.user_id,tm.expires_at,t.tenant_name,tc.channel_name
+                SELECT tm.user_id,tm.username,tm.expires_at,t.tenant_name,tc.channel_name
                 FROM tenant_memberships tm
                 LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
                 LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
@@ -503,10 +517,12 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         lines = ["👥 AKTİF VIP ÜYELER"]
         for r in legacy_rows:
             dt = datetime.fromisoformat(r["expires_at"])
-            lines.append(f"• {r['user_id']} — Eski ana kanal — bitiş {dt:%d.%m.%Y %H:%M}")
+            lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
+            lines.append(f"  Eski ana kanal — bitiş {dt:%d.%m.%Y %H:%M}")
         for r in tenant_rows:
             dt = datetime.fromisoformat(r["expires_at"])
-            lines.append(f"• {r['user_id']} — {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'Kanal'} — {dt:%d.%m.%Y %H:%M}")
+            lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
+            lines.append(f"  {r['tenant_name'] or 'Müşteri'} / {r['channel_name'] or 'Kanal'} — bitiş {dt:%d.%m.%Y %H:%M}")
         if not legacy_rows and not tenant_rows:
             lines.append("Aktif VIP üye bulunmuyor.")
         lines += ["", f"📦 Süresi dolmuş kayıt: {expired_legacy + expired_tenant}"]
@@ -580,12 +596,12 @@ async def members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = now().isoformat()
     with connect() as c:
         legacy_rows = c.execute(
-            "SELECT user_id,expires_at FROM memberships WHERE status='active' AND expires_at>? ORDER BY expires_at",
+            "SELECT user_id,username,expires_at FROM memberships WHERE status='active' AND expires_at>? ORDER BY expires_at",
             (current,)
         ).fetchall()
         tenant_rows = c.execute("""
             SELECT tm.tenant_id, t.tenant_name, tm.channel_id, tc.channel_name,
-                   tm.user_id, tm.expires_at
+                   tm.user_id, tm.username, tm.expires_at
             FROM tenant_memberships tm
             LEFT JOIN tenants t ON t.tenant_id=tm.tenant_id
             LEFT JOIN tenant_channels tc ON tc.channel_id=tm.channel_id
@@ -598,14 +614,15 @@ async def members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for r in tenant_rows[:100]:
             expiry = datetime.fromisoformat(r['expires_at'])
             lines.append(
-                f"• {r['user_id']} — {expiry:%d.%m.%Y %H:%M}\n"
-                f"  {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or r['channel_id']}"
+                f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok"\n"
+                f"  {expiry:%d.%m.%Y %H:%M} — {r['tenant_name'] or r['tenant_id']} / {r['channel_name'] or r['channel_id']}"
             )
     if legacy_rows:
         lines.append("\n📋 Eski sistem üyeleri")
         for r in legacy_rows[:100]:
             expiry = datetime.fromisoformat(r['expires_at'])
-            lines.append(f"• {r['user_id']} — {expiry:%d.%m.%Y %H:%M}")
+            lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
+            lines.append(f"  Bitiş: {expiry:%d.%m.%Y %H:%M}")
     if not lines:
         await update.message.reply_text("Aktif VIP üye yok.")
         return
@@ -991,7 +1008,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         return
 
     with connect() as c:
-        application = c.execute("""SELECT application_id,tenant_id,channel_id,user_id,status
+        application = c.execute("""SELECT application_id,tenant_id,channel_id,user_id,username,status
             FROM tenant_applications WHERE application_id=?""", (app_id,)).fetchone()
     if not application:
         await q.answer("Başvuru bulunamadı.", show_alert=True)
@@ -1030,10 +1047,11 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         with connect() as c:
             c.execute("UPDATE tenant_applications SET status='approved' WHERE application_id=?", (app_id,))
             c.execute("""INSERT INTO tenant_memberships
-                (tenant_id,channel_id,user_id,expires_at,status) VALUES(?,?,?,?, 'active')
+                (tenant_id,channel_id,user_id,expires_at,status,username) VALUES(?,?,?,?, 'active',?)
                 ON CONFLICT(tenant_id,channel_id,user_id) DO UPDATE SET
-                expires_at=excluded.expires_at,status='active'""",
-                (tenant_id, vip_channel_id, user_id, expires.isoformat()))
+                expires_at=excluded.expires_at,status='active',
+                username=COALESCE(NULLIF(excluded.username,''),tenant_memberships.username)""",
+                (tenant_id, vip_channel_id, user_id, expires.isoformat(), application["username"] or ""))
         try:
             await context.bot.send_message(
                 user_id,
