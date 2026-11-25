@@ -708,8 +708,8 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     elif q.data.startswith('tenantpanel:teamroleask:'):
         try:
-            _, _, _, channel_text, target_text = q.data.split(':')
-            channel_value, target = int(channel_text), int(target_text)
+            parts = q.data.split(':')
+            channel_value, target = int(parts[2]), int(parts[3])
             if scope is not None and channel_value not in scope:
                 raise PermissionError()
             if not manager_has_permission(uid, tid, channel_value, 'settings'):
@@ -740,8 +740,8 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     elif q.data.startswith('tenantpanel:teamrole:'):
         try:
-            _, _, _, channel_text, target_text, new_role = q.data.split(':')
-            channel_value, target = int(channel_text), int(target_text)
+            parts = q.data.split(':')
+            channel_value, target, new_role = int(parts[2]), int(parts[3]), parts[4]
             if new_role not in ('manager', 'moderator', 'finance', 'publisher'):
                 raise ValueError()
             if scope is not None and channel_value not in scope:
