@@ -68,6 +68,12 @@ def init_db():
             channel_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL,
             reminder_days INTEGER NOT NULL, sent_at TEXT NOT NULL,
             PRIMARY KEY(membership_type,tenant_id,channel_id,user_id,reminder_days))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS membership_payments(
+            payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            membership_type TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT '',
+            channel_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL,
+            amount REAL NOT NULL, note TEXT, paid_at TEXT NOT NULL,
+            recorded_by INTEGER NOT NULL)""")
 
         # Üyelik tablolarına Telegram kullanıcı adı alanlarını geriye dönük ekle.
         membership_columns = {row[1] for row in c.execute("PRAGMA table_info(memberships)").fetchall()}
@@ -236,6 +242,7 @@ def admin_panel_keyboard():
          InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
+        [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
     ])
@@ -659,6 +666,60 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             ])
         )
 
+    elif q.data.startswith("tenantpanel:payadd:"):
+        parts = q.data.split(":")
+        try:
+            kind = parts[3]
+            if kind == "legacy" and len(parts) == 5:
+                member_id = int(parts[4]); channel_value = int(channel_id() or 0); tenant_key = "legacy_single"
+            elif kind == "tenant" and len(parts) == 6:
+                channel_value = int(parts[4]); member_id = int(parts[5])
+                with connect() as conn:
+                    tr = conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
+                if not tr: raise ValueError()
+                tenant_key = tr["tenant_id"]
+            else: raise ValueError()
+            context.user_data["pending_payment"] = {"kind":kind,"tenant_id":tenant_key,"channel_id":channel_value,"user_id":member_id}
+        except (ValueError, IndexError, TypeError):
+            await q.answer("Üye bilgisi geçersiz.", show_alert=True); return
+        await q.edit_message_text(
+            f"💳 ÖDEME KAYDI\\n\\nÜye ID: {member_id}\\nÖdeme tutarını TL olarak yaz. İstersen sonuna açıklama ekle.\\nÖrnek: 1500 Aylık VIP",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:memberdetail:{kind}:{member_id}" if kind=="legacy" else f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}")]])
+        )
+
+    elif q.data.startswith("tenantpanel:payhistory:"):
+        parts = q.data.split(":")
+        try:
+            kind = parts[3]
+            if kind == "legacy" and len(parts) == 5:
+                member_id=int(parts[4]); tenant_key="legacy_single"; channel_value=int(channel_id() or 0)
+            elif kind == "tenant" and len(parts) == 6:
+                channel_value=int(parts[4]); member_id=int(parts[5])
+                with connect() as conn:
+                    tr=conn.execute("SELECT tenant_id FROM tenant_channels WHERE channel_id=?", (channel_value,)).fetchone()
+                if not tr: raise ValueError()
+                tenant_key=tr["tenant_id"]
+            else: raise ValueError()
+            with connect() as conn:
+                rows=conn.execute("""SELECT amount,note,paid_at,recorded_by FROM membership_payments
+                    WHERE membership_type=? AND tenant_id=? AND channel_id=? AND user_id=?
+                    ORDER BY paid_at DESC LIMIT 20""",(kind,tenant_key,channel_value,member_id)).fetchall()
+                total=conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments
+                    WHERE membership_type=? AND tenant_id=? AND channel_id=? AND user_id=?""",
+                    (kind,tenant_key,channel_value,member_id)).fetchone()
+            lines=[f"📒 ÖDEME GEÇMİŞİ — {member_id}","",f"Kayıt: {total[0]}",f"Toplam: {total[1]:,.2f} TL",""]
+            for p in rows:
+                when=datetime.fromisoformat(p["paid_at"])
+                lines.append(f"• {p['amount']:,.2f} TL — {when:%d.%m.%Y %H:%M}"+(f" ({p['note']})" if p["note"] else ""))
+            if not rows: lines.append("Bu üyeye ait ödeme kaydı yok.")
+            back=f"tenantpanel:memberdetail:{kind}:{member_id}" if kind=="legacy" else f"tenantpanel:memberdetail:tenant:{channel_value}:{member_id}"
+            await q.edit_message_text("\\n".join(lines)[:4000],reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Üye detayına dön",callback_data=back)],
+                [InlineKeyboardButton("🏠 Ana panel",callback_data="tenantpanel:home")]
+            ]))
+        except (ValueError,IndexError,TypeError):
+            await q.answer("Ödeme geçmişi açılamadı.",show_alert=True); return
+
     elif q.data.startswith("tenantpanel:memberdetail:"):
         parts = q.data.split(":")
         if len(parts) == 4 and parts[2] == "legacy":
@@ -722,12 +783,29 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton(f"➕ {days} gün uzat", callback_data=f"tenantpanel:extend:ask:{extend_kind}:{extend_scope}:{days}")]
             for days in (30, 60, 90)
         ]
+        pay_scope = f"legacy:{member_id}" if extend_kind == "legacy" else f"tenant:{channel_value}:{member_id}"
         await q.edit_message_text(detail_text, reply_markup=InlineKeyboardMarkup(
             extend_buttons + [
+                [InlineKeyboardButton("💳 Ödeme kaydet", callback_data=f"tenantpanel:payadd:{pay_scope}")],
+                [InlineKeyboardButton("📒 Ödeme geçmişi", callback_data=f"tenantpanel:payhistory:{pay_scope}")],
                 [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")],
                 [InlineKeyboardButton("🏠 Ana panel", callback_data="tenantpanel:home")]
             ]
         ))
+
+    elif q.data == "tenantpanel:payments":
+        with connect() as conn:
+            totals = conn.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments").fetchone()
+            recent = conn.execute("""SELECT user_id,amount,note,paid_at FROM membership_payments
+                ORDER BY paid_at DESC LIMIT 10""").fetchall()
+        lines = ["💳 ÖDEME TAKİBİ", "", f"Toplam kayıt: {totals[0]}", f"Toplam tahsilat: {totals[1]:,.2f} TL", "", "Son ödemeler:"]
+        for p in recent:
+            when = datetime.fromisoformat(p["paid_at"])
+            note = f" — {p['note']}" if p["note"] else ""
+            lines.append(f"• ID {p['user_id']} | {p['amount']:,.2f} TL | {when:%d.%m.%Y}{note}")
+        if not recent:
+            lines.append("Henüz ödeme kaydı yok.")
+        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:expiring":
         current_dt = now()
@@ -1582,6 +1660,33 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.error("VIP talebi için yöneticiye özel bildirim gönderilemedi; tenant=%s chat=%s", tenant_id, chat.id)
 
 
+async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pending = context.user_data.get("pending_payment")
+    if not pending or not admin_only(update):
+        return
+    raw = (update.effective_message.text or "").strip()
+    bits = raw.split(maxsplit=1)
+    try:
+        amount = float(bits[0].replace(",", "."))
+        if amount <= 0 or amount > 100000000:
+            raise ValueError()
+    except (ValueError, IndexError):
+        await update.effective_message.reply_text("Geçerli tutar gir. Örnek: 1500 veya 1500 Aylık VIP")
+        return
+    note = bits[1][:200] if len(bits) > 1 else ""
+    with connect() as conn:
+        conn.execute("""INSERT INTO membership_payments
+            (membership_type,tenant_id,channel_id,user_id,amount,note,paid_at,recorded_by)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (pending["kind"],pending["tenant_id"],pending["channel_id"],pending["user_id"],
+             amount,note,now().isoformat(),update.effective_user.id))
+    context.user_data.pop("pending_payment",None)
+    await update.effective_message.reply_text(
+        f"✅ Ödeme kaydedildi.\\nÜye ID: {pending['user_id']}\\nTutar: {amount:,.2f} TL"
+        + (f"\\nAçıklama: {note}" if note else "")
+    )
+
+
 async def group_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
@@ -1767,6 +1872,7 @@ def main():
     app.add_handler(CommandHandler("linkekle", add_link))
     app.add_handler(CommandHandler("destekekle", add_support))
     app.add_handler(CommandHandler("topluyayin", tenant_broadcast))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, payment_input_router))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_text_router))
     log.info("GOLDEN CLUB BOT - çok kanallı panel aktif.")
