@@ -523,7 +523,7 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not tid:
             await update.message.reply_text('Birden fazla müşteride yetkin var. /musterisec MUSTERI_ID kullan.')
             return
-        await update.message.reply_text('🏢 MÜŞTERİ YÖNETİM PANELİ\\n\\nYalnızca yetkili olduğun müşterinin kayıtlarını yönetebilirsin.', reply_markup=tenant_panel_keyboard())
+        await update.message.reply_text('🏢 MÜŞTERİ YÖNETİM PANELİ\n\nYalnızca yetkili olduğun müşterinin kayıtlarını yönetebilirsin.', reply_markup=tenant_panel_keyboard())
         return
     await update.message.reply_text(
         "🛠 ALTAY VIP BOT — YÖNETİCİ PANELİ\n\n"
@@ -595,7 +595,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         if channels:
             buttons.insert(0, [InlineKeyboardButton('➕ Ekip üyesi ekle', callback_data='tenantpanel:teamadd')])
         buttons.append([InlineKeyboardButton('⬅️ Ana panel', callback_data='tenantpanel:home')])
-        await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
+        await q.edit_message_text("\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
 
     elif q.data == 'tenantpanel:teamadd':
         if not manager_has_permission(uid, tid, None, 'settings'):
@@ -603,8 +603,8 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             return
         context.user_data['pending_team_grant'] = {'tenant_id':tid,'created_by':uid,'scope':scope}
         await q.edit_message_text(
-            '➕ EKİP ÜYESİ EKLE\\n\\nTelegram kullanıcı ID, rol ve kanal ID bilgilerini tek satırda gönder.\\n'
-            'Örnek: 123456789 moderator -1001234567890\\n\\n'
+            '➕ EKİP ÜYESİ EKLE\n\nTelegram kullanıcı ID, rol ve kanal ID bilgilerini tek satırda gönder.\n'
+            'Örnek: 123456789 moderator -1001234567890\n\n'
             'Roller: moderator, finance, publisher. Manager yetkisini yalnızca müşteri sahibi verebilir.',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Vazgeç', callback_data='tenantpanel:team')]])
         )
@@ -786,9 +786,9 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         kb += [[InlineKeyboardButton('🚫 VIP erişimini kaldır', callback_data=f'tenantpanel:removeaskcust:{channel_value}:{member_id}')],
                [InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]]
         await q.edit_message_text(
-            f'👤 ÜYE DETAYI\\n\\nAd: {row["username"] or "—"}\\nTelegram ID: {member_id}'
-            f'\\nKanal: {row["channel_name"]}\\nDurum: {row["status"]}'
-            f'\\nÜyelik bitişi: {expiry:%d.%m.%Y %H:%M}',
+            f'👤 ÜYE DETAYI\n\nAd: {row["username"] or "—"}\nTelegram ID: {member_id}'
+            f'\nKanal: {row["channel_name"]}\nDurum: {row["status"]}'
+            f'\nÜyelik bitişi: {expiry:%d.%m.%Y %H:%M}',
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
@@ -813,11 +813,11 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             log_admin_action(uid, 'Müşteri panelinden üyelik uzatma', member_id,
                              f'{days} gün; tenant={tid}; kanal={channel_value}')
             try:
-                await context.bot.send_message(member_id, f'🎉 VIP üyeliğin {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}')
+                await context.bot.send_message(member_id, f'🎉 VIP üyeliğin {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}')
             except Exception:
                 log.info('Üyelik uzatma bildirimi gönderilemedi: %s', member_id)
             await q.edit_message_text(
-                f'✅ Üyelik {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}',
+                f'✅ Üyelik {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('👤 Üye detayına dön',
                     callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')],
                     [InlineKeyboardButton('⬅️ Üye listesi', callback_data='tenantpanel:members')]])
@@ -852,7 +852,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             await q.answer('Üye kaydı bulunamadı.', show_alert=True)
             return
         await q.edit_message_text(
-            f'💳 ÖDEME KAYDI\\n\\nÜye ID: {member_id}\\nÖdeme tutarını TL olarak yaz.\\nÖrnek: 1500 Aylık VIP',
+            f'💳 ÖDEME KAYDI\n\nÜye ID: {member_id}\nÖdeme tutarını TL olarak yaz.\nÖrnek: 1500 Aylık VIP',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Vazgeç',
                 callback_data=f'tenantpanel:memberdetail:tenant:{channel_value}:{member_id}')]])
         )
@@ -973,7 +973,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         for i, ch in enumerate(channels):
             buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"tenantpanel:atg:{i}")])
         buttons.append([InlineKeyboardButton("⬅️ Müşteri listesi", callback_data="tenantpanel:adminteams")])
-        await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
+        await q.edit_message_text("\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
 
     elif q.data.startswith("tenantpanel:atg:"):
         parts = q.data.split(":")
@@ -986,7 +986,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Kanal bulunamadı.", show_alert=True); return
         context.user_data["pending_admin_team"] = {"tenant_id":tenant_key,"channel_id":cid,"created_by":uid}
         await q.edit_message_text(
-            f"➕ EKİP YETKİSİ — {channel['channel_name']}\\n\\nTelegram kullanıcı ID ve rolü yaz.\\nÖrnek: 123456789 moderator\\n\\nRoller: manager, moderator, finance, publisher",
+            f"➕ EKİP YETKİSİ — {channel['channel_name']}\n\nTelegram kullanıcı ID ve rolü yaz.\nÖrnek: 123456789 moderator\n\nRoller: manager, moderator, finance, publisher",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Vazgeç", callback_data=f"tenantpanel:admintenant:{tenant_key}")]])
         )
 
@@ -2363,7 +2363,7 @@ async def create_tenant_command(update: Update, context: ContextTypes.DEFAULT_TY
         c.execute('INSERT INTO tenants(tenant_id,tenant_name,status,created_at) VALUES(?,?,\'active\',?)', (tid,name,now().isoformat()))
         c.execute('INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at) VALUES(?,?,\'owner\',NULL,\'active\',?)', (tid,owner_id,now().isoformat()))
     log_admin_action(update.effective_user.id,'Müşteri oluşturuldu',owner_id,f'{name}; {tid}')
-    await update.effective_message.reply_text(f'✅ Müşteri oluşturuldu.\\nAd: {name}\\nMüşteri kodu: {tid}\\nSahip ID: {owner_id}\\nSahip /admin ile paneli açabilir.')
+    await update.effective_message.reply_text(f'✅ Müşteri oluşturuldu.\nAd: {name}\nMüşteri kodu: {tid}\nSahip ID: {owner_id}\nSahip /admin ile paneli açabilir.')
 
 
 async def list_tenants_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2371,7 +2371,7 @@ async def list_tenants_command(update: Update, context: ContextTypes.DEFAULT_TYP
     with connect() as c:
         rows = c.execute('SELECT t.tenant_id,t.tenant_name,COUNT(ch.channel_id) AS channels FROM tenants t LEFT JOIN tenant_channels ch ON ch.tenant_id=t.tenant_id AND ch.status=\'active\' WHERE t.status=\'active\' GROUP BY t.tenant_id ORDER BY t.tenant_name').fetchall()
     lines = ['AKTİF MÜŞTERİLER'] + [f"• {r['tenant_name']} — {r['tenant_id']} — {r['channels']} kanal" for r in rows]
-    await update.effective_message.reply_text('\\n'.join(lines)[:3900] if rows else 'Aktif müşteri yok.')
+    await update.effective_message.reply_text('\n'.join(lines)[:3900] if rows else 'Aktif müşteri yok.')
 
 
 async def select_tenant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
