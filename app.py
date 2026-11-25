@@ -601,8 +601,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Üyelik bilgisi geçersiz.", show_alert=True)
             return
         await q.edit_message_text(
-            f"⚠️ ÜYELİK UZATMA ONAYI\\n\\nÜye ID: {member_id}\\nKanal: {label}\\n"
-            f"Uzatma: {days} gün\\nMevcut bitiş: {datetime.fromisoformat(row['expires_at']):%d.%m.%Y %H:%M}\\n\\n"
+            f"⚠️ ÜYELİK UZATMA ONAYI\n\nÜye ID: {member_id}\nKanal: {label}\n"
+            f"Uzatma: {days} gün\nMevcut bitiş: {datetime.fromisoformat(row['expires_at']):%d.%m.%Y %H:%M}\n\n"
             "Onaylıyor musun? Onay vermeden üyelik süresi değişmez.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Evet, uzat", callback_data=f"tenantpanel:extend:do:{scope}:{days}")],
@@ -646,13 +646,13 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Üyelik uzatılamadı; kayıt aktif olmayabilir.", show_alert=True)
             return
         try:
-            await context.bot.send_message(member_id, f"🎉 VIP üyeliğin {days} gün uzatıldı.\\nYeni bitiş: {until:%d.%m.%Y %H:%M}")
+            await context.bot.send_message(member_id, f"🎉 VIP üyeliğin {days} gün uzatıldı.\nYeni bitiş: {until:%d.%m.%Y %H:%M}")
         except Exception:
             log.info("Üyelik uzatma bildirimi gönderilemedi: %s", member_id)
         await q.answer("Üyelik süresi güncellendi.")
         await q.edit_message_text(
-            f"✅ ÜYELİK UZATILDI\\n\\nÜye ID: {member_id}\\nKanal: {label}\\n"
-            f"Eklenen süre: {days} gün\\nYeni bitiş: {until:%d.%m.%Y %H:%M}",
+            f"✅ ÜYELİK UZATILDI\n\nÜye ID: {member_id}\nKanal: {label}\n"
+            f"Eklenen süre: {days} gün\nYeni bitiş: {until:%d.%m.%Y %H:%M}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👤 Üye detayına dön", callback_data=back)],
                 [InlineKeyboardButton("⬅️ VIP üye listesi", callback_data="tenantpanel:members")]
