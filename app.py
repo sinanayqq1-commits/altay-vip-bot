@@ -487,7 +487,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
 
     if q.data == "tenantpanel:home":
         await q.edit_message_text(
-            "🛠 GOLDEN VIP — YÖNETİM PANELİ\\n\\nİşlem yapmak için aşağıdan bir bölüm seç.",
+            "🛠 GOLDEN VIP — YÖNETİM PANELİ\n\nİşlem yapmak için aşağıdan bir bölüm seç.",
             reply_markup=admin_panel_keyboard()
         )
     elif q.data == "tenantpanel:channels":
@@ -820,7 +820,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines.append(f"• {item['period']}: {item['total']:,.2f} TL ({item['count']} ödeme)")
         if not monthly:
             lines.append("Henüz ödeme kaydı bulunmuyor.")
-        await q.edit_message_text("\\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
+        await q.edit_message_text("\n".join(lines)[:4000], reply_markup=admin_panel_keyboard())
 
     elif q.data == "tenantpanel:payments":
         with connect() as conn:
@@ -1040,15 +1040,15 @@ async def extend_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bu kullanıcı için uzatılabilecek aktif VIP üyeliği bulunamadı. Yeni üyelik vermek için /onayla kullan.")
         return
     try:
-        detail = "\\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
+        detail = "\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
         await context.bot.send_message(
-            uid, f"🎉 VIP üyeliklerin {days} gün uzatıldı.\\nYeni bitiş tarihleri:\\n{detail}"
+            uid, f"🎉 VIP üyeliklerin {days} gün uzatıldı.\nYeni bitiş tarihleri:\n{detail}"
         )
     except Exception:
         log.info("Üyelik uzatma bildirimi gönderilemedi: %s", uid)
-    detail = "\\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
+    detail = "\n".join(f"• {name}: {until:%d.%m.%Y %H:%M}" for name, until in updated)
     await update.message.reply_text(
-        f"{uid} kullanıcısının {len(updated)} VIP üyeliği {days} gün uzatıldı.\\n{detail}"
+        f"{uid} kullanıcısının {len(updated)} VIP üyeliği {days} gün uzatıldı.\n{detail}"
     )
 
 
@@ -1421,8 +1421,8 @@ async def send_membership_reminders(context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(
                     uid,
-                    f"⏳ VIP üyeliğinin bitmesine {label} kaldı.\\n"
-                    f"Bitiş tarihi: {expiry:%d.%m.%Y %H:%M}\\n"
+                    f"⏳ VIP üyeliğinin bitmesine {label} kaldı.\n"
+                    f"Bitiş tarihi: {expiry:%d.%m.%Y %H:%M}\n"
                     "Üyeliğini yenilemek için yöneticinle iletişime geç."
                 )
             except Exception:
@@ -1457,7 +1457,7 @@ async def create_database_backup(context, notify=True):
                         chat_id=admin_id,
                         document=backup_file,
                         filename=f"GOLDEN_VIP_YEDEK_{stamp}.sqlite3",
-                        caption=f"🔐 GOLDEN VIP veritabanı yedeği\\nTarih: {now():%d.%m.%Y %H:%M}\\nBu dosyayı güvenli bir yerde sakla."
+                        caption=f"🔐 GOLDEN VIP veritabanı yedeği\nTarih: {now():%d.%m.%Y %H:%M}\nBu dosyayı güvenli bir yerde sakla."
                     )
                 sent += 1
             except Exception:
@@ -1510,7 +1510,7 @@ async def application_error_handler(update: object, context: ContextTypes.DEFAUL
         try:
             await context.bot.send_message(
                 admin_id,
-                f"⚠️ GOLDEN VIP botunda bir işlem hatası oluştu.\\nTür: {error_name}\\nAyrıntı için Railway loglarını kontrol et."
+                f"⚠️ GOLDEN VIP botunda bir işlem hatası oluştu.\nTür: {error_name}\nAyrıntı için Railway loglarını kontrol et."
             )
         except Exception:
             log.exception("Hata bildirimi yöneticiye gönderilemedi: %s", admin_id)
