@@ -948,7 +948,7 @@ async def post_init(app):
         )
     app.job_queue.run_repeating(expire, interval=300, first=20, name="vip-expiry")
     app.job_queue.run_repeating(expire_tenant_memberships, interval=300, first=30, name="tenant-vip-expiry")
-    app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=10800, name="golden-group-promo")
+    app.job_queue.run_repeating(send_golden_group_promo, interval=10800, first=0, name="golden-group-promo")
 
 
 
