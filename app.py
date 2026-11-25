@@ -964,14 +964,14 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         if not roles: lines.append("Henüz ekip yetkilisi yok.")
         lines += ["", "Yeni yetkili eklemek için kanal seç:"]
         for ch in channels:
-            buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"tenantpanel:adminteamgrant:{tenant_key}:{ch['channel_id']}")])
+            buttons.append([InlineKeyboardButton(f"➕ {ch['channel_name']}", callback_data=f"atg:{tenant_key}:{ch['channel_id']}")])
         buttons.append([InlineKeyboardButton("⬅️ Müşteri listesi", callback_data="tenantpanel:adminteams")])
         await q.edit_message_text("\\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(buttons))
 
-    elif q.data.startswith("tenantpanel:adminteamgrant:"):
+    elif q.data.startswith("atg:"):
         parts = q.data.split(":")
         try:
-            tenant_key, cid = parts[2], int(parts[3])
+            tenant_key, cid = parts[1], int(parts[2])
             with connect() as c:
                 channel = c.execute("SELECT channel_name FROM tenant_channels WHERE tenant_id=? AND channel_id=? AND status='active'", (tenant_key,cid)).fetchone()
             if not channel: raise ValueError()
