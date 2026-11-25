@@ -902,6 +902,14 @@ async def expire_tenant_memberships(context: ContextTypes.DEFAULT_TYPE):
             log.info('Süre bitiş bildirimi kullanıcıya gönderilemedi: %s', row['user_id'])
 
 
+async def test_golden_group_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not admin(update.effective_user.id):
+        await update.effective_message.reply_text("Bu test yalnızca ana yöneticiye açık.")
+        return
+    await send_golden_group_promo(context)
+    await update.effective_message.reply_text("Test gönderimi tetiklendi. GOLDEN CLUB SOHBET grubunu kontrol et.")
+
+
 async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
     """Send a recurring GOLDEN VIP invitation to the registered chat group."""
     with connect() as c:
@@ -1351,6 +1359,7 @@ def main():
     app.add_handler(CommandHandler("vip", vip_command))
     app.add_handler(CommandHandler("kimim", whoami))
     app.add_handler(CommandHandler("kanalkaydet", register_channel))
+    app.add_handler(CommandHandler("testtanitim", test_golden_group_promo))
     app.add_handler(CommandHandler("admin", panel))
     app.add_handler(CommandHandler("uyeler", members))
     app.add_handler(CommandHandler("onayla", grant))
