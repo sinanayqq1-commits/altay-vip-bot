@@ -260,9 +260,9 @@ def init_db():
                     (channel_id,tenant_id,channel_name,channel_type,status)
                     VALUES(?,?,?,?,?)""",
                     (legacy_channel, "legacy_single", "Eski ana kanal", "legacy", "active"))
-                c.execute("UPDATE tenants SET tenant_name='GOLDEN VIP', status='active' WHERE tenant_id='legacy_single'")
-                c.execute("UPDATE tenant_channels SET channel_name='GOLDEN VIP' WHERE channel_id=? AND tenant_id='legacy_single'", (legacy_channel,))
-                # Ana yöneticiyi GOLDEN VIP kanalının kayıtlı sahibi/yöneticisi olarak tanımla.
+                c.execute("UPDATE tenants SET tenant_name='MEDYAECAN VIP', status='active' WHERE tenant_id='legacy_single'")
+                c.execute("UPDATE tenant_channels SET channel_name='MEDYAECAN VIP' WHERE channel_id=? AND tenant_id='legacy_single'", (legacy_channel,))
+                # Ana yöneticiyi MEDYAECAN VIP kanalının kayıtlı sahibi/yöneticisi olarak tanımla.
                 for owner_id in ADMIN_IDS:
                     c.execute("UPDATE tenant_channels SET owner_user_id=? WHERE channel_id=? AND tenant_id='legacy_single'",
                               (owner_id, legacy_channel))
@@ -433,7 +433,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             await update.effective_message.reply_text(
-                "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\nTelegram botları, VIP kanal yönetimi ve işletmelere özel otomasyon çözümlerimizi incelemek; paketlerimizi ve satış fiyatlarımızı görmek için aşağıdaki butona bas.\n\nGOLDEN CLUB VIP üyelik işlemleri ayrı sistemde devam eder.",
+                "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\nTelegram botları, VIP kanal yönetimi ve işletmelere özel otomasyon çözümlerimizi incelemek; paketlerimizi ve satış fiyatlarımızı görmek için aşağıdaki butona bas.\n\nMEDYAECAN VIP üyelik işlemleri ayrı sistemde devam eder.",
                 reply_markup=kb
             )
         return
@@ -563,7 +563,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 candidate = datetime.fromisoformat(tenant_exp["expires_at"])
                 exp = candidate if candidate > now() else None
         if exp:
-            msg = (f"💎 GOLDEN VIP ÜYE ALANI\n\nHoş geldin {user.first_name}!\n"
+            msg = (f"💎 MEDYAECAN VIP ÜYE ALANI\n\nHoş geldin {user.first_name}!\n"
                    f"VIP üyeliğin aktif. Bitiş: {exp:%d.%m.%Y %H:%M}\n\nÜyelik bilgilerini ve desteği buradan takip edebilirsin.")
             rows = [[InlineKeyboardButton("📅 Üyelik Durumum", callback_data="status"),
                      InlineKeyboardButton("🆘 Destek", callback_data="support")]]
@@ -1575,7 +1575,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             dt = datetime.fromisoformat(r["expires_at"])
             lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
             lines.append(f"  Eski ana kanal — bitiş {dt:%d.%m.%Y %H:%M}")
-            member_buttons.append([InlineKeyboardButton(f"👤 {r['username'] or r['user_id']} — GOLDEN VIP", callback_data=f"tenantpanel:memberdetail:legacy:{r['user_id']}")])
+            member_buttons.append([InlineKeyboardButton(f"👤 {r['username'] or r['user_id']} — MEDYAECAN VIP", callback_data=f"tenantpanel:memberdetail:legacy:{r['user_id']}")])
         for r in tenant_rows:
             dt = datetime.fromisoformat(r["expires_at"])
             lines.append(f"• ID: {r['user_id']} | Kullanıcı adı: @{r['username']}" if r['username'] else f"• ID: {r['user_id']} | Kullanıcı adı: yok")
@@ -1597,7 +1597,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 scope = f"legacy:{member_id}"
                 with connect() as conn:
                     row = conn.execute("SELECT expires_at,status FROM memberships WHERE user_id=?", (member_id,)).fetchone()
-                label = "GOLDEN VIP"
+                label = "MEDYAECAN VIP"
             elif kind == "tenant" and len(parts) == 7:
                 channel_value, member_id, days = int(parts[4]), int(parts[5]), int(parts[6])
                 scope = f"tenant:{channel_value}:{member_id}"
@@ -1637,7 +1637,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                         raise ValueError()
                     until = max(datetime.fromisoformat(row["expires_at"]), now()) + timedelta(days=days)
                     conn.execute("UPDATE memberships SET expires_at=? WHERE user_id=? AND status='active'", (until.isoformat(), member_id))
-                label = "GOLDEN VIP"
+                label = "MEDYAECAN VIP"
                 back = f"tenantpanel:memberdetail:legacy:{member_id}"
             elif kind == "tenant" and len(parts) == 7:
                 channel_value, member_id, days = int(parts[4]), int(parts[5]), int(parts[6])
@@ -1783,7 +1783,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 "👤 VIP ÜYE DETAYI\n\n"
                 f"Ad soyad: {row['full_name'] or 'Kayıtlı değil'}\n"
                 f"Kullanıcı adı: {username}\nTelegram ID: {row['user_id']}\n"
-                f"Üyelik: GOLDEN VIP (ana kanal)\nDurum: {row['status']}\n"
+                f"Üyelik: MEDYAECAN VIP (ana kanal)\nDurum: {row['status']}\n"
                 f"Bitiş: {expiry:%d.%m.%Y %H:%M}\nKalan süre: {max(0, remaining)} gün"
             )
         elif len(parts) == 5 and parts[2] == "tenant":
@@ -1998,7 +1998,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             username = f"@{r['username']}" if r["username"] else "kullanıcı adı yok"
             lines.append(
                 f"• ID: {r['user_id']} | {username}\n"
-                f"  GOLDEN VIP — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
+                f"  MEDYAECAN VIP — {expiry:%d.%m.%Y %H:%M} ({remaining} gün kaldı)"
             )
         for r in tenant_rows:
             expiry = datetime.fromisoformat(r["expires_at"])
@@ -2157,7 +2157,7 @@ async def extend_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
             until = max(base, current) + timedelta(days=days)
             c.execute("UPDATE memberships SET expires_at=? WHERE user_id=? AND status='active'",
                       (until.isoformat(), uid))
-            updated.append(("GOLDEN VIP", until))
+            updated.append(("MEDYAECAN VIP", until))
         tenant_rows = c.execute(
             """SELECT tenant_id,channel_id,expires_at FROM tenant_memberships
                WHERE user_id=? AND status='active'""", (uid,)
@@ -2719,7 +2719,7 @@ async def create_database_backup(context, notify=True):
                         chat_id=admin_id,
                         document=backup_file,
                         filename=f"GOLDEN_VIP_YEDEK_{stamp}.sqlite3",
-                        caption=f"🔐 GOLDEN VIP veritabanı yedeği\nTarih: {now():%d.%m.%Y %H:%M}\nBu dosyayı güvenli bir yerde sakla."
+                        caption=f"🔐 MEDYAECAN VIP veritabanı yedeği\nTarih: {now():%d.%m.%Y %H:%M}\nBu dosyayı güvenli bir yerde sakla."
                     )
                 sent += 1
             except Exception:
@@ -2732,7 +2732,7 @@ async def create_database_backup(context, notify=True):
         if notify:
             for admin_id in ADMIN_IDS:
                 try:
-                    await context.bot.send_message(admin_id, "⚠️ GOLDEN VIP veritabanı yedeği oluşturulamadı. Railway loglarını kontrol et.")
+                    await context.bot.send_message(admin_id, "⚠️ MEDYAECAN VIP veritabanı yedeği oluşturulamadı. Railway loglarını kontrol et.")
                 except Exception:
                     pass
         return 0
