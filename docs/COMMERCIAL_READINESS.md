@@ -1,0 +1,83 @@
+# MEDYAECAN BOT — Ticari Hazırlık Raporu
+
+**Durum:** Hazırlık / teknik inceleme  
+**Kapsam:** Kaynak kodu ve bağlı Railway üretim yapılandırmasının salt okunur incelemesi  
+**Canlı sisteme değişiklik:** Yapılmadı
+
+## Ürün özeti
+
+MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde yönetmek üzere geliştirilmiş Python uygulamasıdır. Müşteri kayıtları, kanal/grup eşleştirmeleri, ekip rolleri, VIP başvuruları, üyelik süreleri, duyurular, lisanslar ve satış kayıtları SQLite veritabanında tutulur.
+
+## Kodda görülen özellikler
+
+- Müşteri/tenant oluşturma ve müşteri sahibi tanımlama
+- Kanal ve grup kaydı; kanalın başka tenant'a taşınmasını engelleyen kontrol
+- Owner, manager, moderator, finance ve publisher rolleri
+- Kanal bazlı ekip yetkilendirme ve izin kontrolleri
+- VIP başvuru onay/red akışı ve süreli davet bağlantıları
+- VIP üyelik süresi takibi ve bitiş iş akışları
+- Tekrarlanan ve zamanlanmış duyurular
+- Müşterinin kanallarına toplu yayın
+- Paket, lisans ve satış kaydı; yönetici tarafından manuel ödeme onayı
+- Yönetici işlem kayıtları
+- Haftalık otomatik yedekleme ve manuel `/yedekle` komutu
+
+## Dağıtım altyapısı kontrolü
+
+İnceleme sırasında Railway üretim ortamında:
+- Son görünen dağıtım durumu SUCCESS idi.
+- Servise 500 MB kalıcı disk bağlanmıştı.
+- Disk bağlama yolu `/data` idi.
+- Başlangıç komutu `python app.py` idi.
+- Üretim ortamında bekleyen değişiklik görünmüyordu.
+
+**Önemli:** Uygulama `DB_PATH` ortam değişkenini kullanıyor. Değişkenin gerçek değeri güvenlik nedeniyle okunamadı. Bu nedenle SQLite dosyasının gerçekten `/data` altında bulunduğu henüz doğrulanmış değildir. Üretim ayarı değiştirilmeden önce bu eşleştirme kontrol edilmeli.
+
+## Satış öncesi kritik işler
+
+### P0 — Yayına/satışa çıkmadan önce
+- [ ] GitHub deposunun erişimi sınırlandırılmalı. Depo şu an public görünüyor. Münhasır ticari satış düşünülüyorsa erişim kapatılmalı; mevcut işbirliği erişimleri önce gözden geçirilmeli.
+- [ ] `DB_PATH` değeri güvenli biçimde doğrulanmalı ve kalıcı disk yoluna bağlanmalı.
+- [ ] Üretim veritabanının yedeği alınmalı; ayrı ortamda geri yükleme testi yapılmalı.
+- [ ] Demo/test tenant kayıtları ve başlangıçta otomatik eklenen örnek bağlantılar kaldırılmalı veya yapılandırılabilir hale getirilmeli.
+- [ ] Uygulamadaki sabit örnek/affiliate bağlantıları ve eski marka/metin kalıntıları temizlenmeli.
+- [ ] Müşteri A'nın yöneticisinin müşteri B'nin kanal, üye, başvuru, ödeme ve ayarlarına erişemediği test edilmeli.
+- [ ] Paket limitleri, deneme süresi, lisans uzatma ve ödeme onayının uçtan uca testleri yapılmalı.
+- [ ] Ödeme akışının yönetici tarafından manuel onaylandığı açıkça belgelenmeli; otomatik ödeme entegrasyonu varmış gibi sunulmamalı.
+
+### P1 — Profesyonel ürünleştirme
+- [ ] Kurulum/ilk yönetici oluşturma sihirbazı
+- [ ] Paket ve fiyatların yönetilebilir yapılandırmadan gelmesi
+- [ ] Müşteri bazlı destek ve marka ayarlarının panelden yönetilmesi
+- [ ] Yedeklerin ikinci güvenli hedefte saklanması ve geri yükleme talimatı
+- [ ] Sağlık kontrolü, hata alarmı ve işlem günlüklerinin gözden geçirilmesi
+- [ ] Otomatik testler ve test veritabanıyla regresyon kontrolü
+- [ ] Kullanıcı sözleşmesi, gizlilik metni ve destek kapsamı
+
+## İlk statik incelemede görülen riskler
+
+| Alan | Gözlem | Öncelik |
+|---|---|---|
+| Depo erişimi | Kaynak kod deposu public | Kritik ticari/IP riski |
+| Veritabanı | SQLite; kalıcı disk var, DB_PATH eşleşmesi teyit edilmedi | Yüksek |
+| Örnek veriler | Başlangıçta demo tenant ve sabit link kayıtları oluşturuluyor | Yüksek |
+| Eski uyumluluk | Tek kanallı/legacy akışların bazı komut ve ayarları hâlâ mevcut | Orta |
+| Ödeme | Satış kaydı ve manuel yönetici onayı mevcut; ödeme sağlayıcısı entegrasyonu doğrulanmadı | Orta |
+| Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; restore testi yok | Yüksek |
+| Yetki modeli | Rol ve kanal kapsamı kontrolleri mevcut; tenant izolasyonu test edilmedi | Yüksek |
+
+## Teknik sınırlar
+
+Bu rapor kaynak kodu ve Railway yapılandırmasının statik incelemesidir. Bağımsız penetrasyon testi, canlı Telegram hesaplarıyla tam fonksiyon testi, hukuki IP sahipliği incelemesi veya güvenlik sertifikası değildir. Ürün henüz "bağımsız güvenlik testinden geçti" şeklinde tanıtılmamalıdır.
+
+## Ticari devir paketi için gerekenler
+
+- Kaynak kod ve sürüm/commit bilgisi
+- Kurulum ve yapılandırma rehberi
+- Özellik listesi ve ekran görüntüleri
+- Test senaryoları ve sonuçları
+- Yedekleme/geri yükleme prosedürü
+- Üçüncü taraf bağımlılık ve lisans listesi
+- Alan adı, sunucu, Telegram botu ve veritabanı devir envanteri
+- IP/devretme sözleşmesi, destek süresi ve kapsamı
+- Gerçek müşteri/satış verileri varsa anonimleştirilmiş gelir ve kullanım kanıtları
