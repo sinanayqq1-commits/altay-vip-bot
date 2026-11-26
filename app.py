@@ -3556,6 +3556,9 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_gift_trial_user_id"):
+        await gift_trial_user_id_input(update, context)
+        return
     admin_team = context.user_data.get("pending_admin_team")
     if admin_team:
         actor_id = update.effective_user.id
@@ -4205,7 +4208,6 @@ def main():
     app.add_handler(CommandHandler("tanitimac", set_promo_setting))
     app.add_handler(CommandHandler("tanitimkapat", set_promo_setting))
     app.add_handler(CommandHandler("tanitimfoto", request_promo_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, gift_trial_user_id_input), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, payment_input_router))
     # Tek fotoğraf yönlendiricisi: VIP tanıtım fotoğrafı bekleniyorsa onu, değilse SITE fotoğrafını kaydeder.
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
