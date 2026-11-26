@@ -390,6 +390,7 @@ def admin_panel_keyboard():
          InlineKeyboardButton("📣 Otomatik duyurular", callback_data="tenantpanel:autoposts")],
         [InlineKeyboardButton("🔐 Yetki kapsamım", callback_data="tenantpanel:roles"),
          InlineKeyboardButton("📊 Sistem durumu", callback_data="tenantpanel:status")],
+        [InlineKeyboardButton("🎁 Hediye deneme üyeliği", callback_data="tenantpanel:gifttrial")],
     ])
 
 
@@ -782,6 +783,29 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Müşteri/kanal kayıtlarını, yönetici yetkilerini ve sistem durumunu görüntüleyebilirsin.\n"
         "Mevcut üyelik kayıtları korunur; işlemler yetki kontrolüyle yürütülür.",
         reply_markup=admin_panel_keyboard()
+    )
+
+
+async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not admin(uid) or not context.user_data.get("awaiting_gift_trial_user_id"):
+        return
+    raw = (update.effective_message.text or "").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        await update.effective_message.reply_text("Geçerli bir Telegram kullanıcı ID gönder. Örnek: 8914478422")
+        return
+    target_id = int(raw)
+    context.user_data["awaiting_gift_trial_user_id"] = False
+    context.user_data["gift_trial_target_user_id"] = target_id
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("7 gün", callback_data="tenantpanel:gift_days:7"),
+         InlineKeyboardButton("15 gün", callback_data="tenantpanel:gift_days:15"),
+         InlineKeyboardButton("30 gün", callback_data="tenantpanel:gift_days:30")],
+        [InlineKeyboardButton("❌ İptal", callback_data="tenantpanel:home")]
+    ])
+    await update.effective_message.reply_text(
+        f"🎁 Telegram ID: {target_id}\nHediye deneme süresini seç:",
+        reply_markup=kb
     )
 
 
@@ -1362,6 +1386,65 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
+
+    if q.data == "tenantpanel:gifttrial":
+        context.user_data["awaiting_gift_trial_user_id"] = True
+        await q.message.reply_text(
+            "🎁 HEDİYE DENEME ÜYELİĞİ\n\n"
+            "Deneme erişimi tanımlanacak kişinin Telegram kullanıcı ID numarasını gönder:"
+        )
+        return
+    elif q.data.startswith("tenantpanel:gift_days:"):
+        try:
+            days = int(q.data.rsplit(":", 1)[1])
+            target_id = int(context.user_data.get("gift_trial_target_user_id", 0))
+            if days not in (7, 15, 30) or target_id <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            await q.answer("İşlem süresi doldu. Hediye denemesini yeniden başlat.", show_alert=True)
+            return
+        tenant_id = f"hediye_{target_id}"
+        expires = now() + timedelta(days=days)
+        tenant_name = f"MEDYAECAN Deneme {target_id}"
+        with connect() as c:
+            exists = c.execute("SELECT 1 FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+            if exists:
+                c.execute(
+                    """UPDATE tenants SET tenant_name=?,status='active',plan_name='hediye_deneme',
+                       license_status='active',license_expires_at=? WHERE tenant_id=?""",
+                    (tenant_name, expires.isoformat(), tenant_id)
+                )
+            else:
+                c.execute(
+                    """INSERT INTO tenants
+                       (tenant_id,tenant_name,status,created_at,plan_name,license_status,license_expires_at)
+                       VALUES(?,?, 'active', ?, 'hediye_deneme', 'active', ?)""",
+                    (tenant_id, tenant_name, now().isoformat(), expires.isoformat())
+                )
+            c.execute(
+                """INSERT OR IGNORE INTO tenant_admins
+                   (tenant_id,user_id,role,channel_id,status,added_at)
+                   VALUES(?,?,'owner',NULL,'active',?)""",
+                (tenant_id, target_id, now().isoformat())
+            )
+        log_admin_action(uid, "Hediye deneme üyeliği tanımlandı", target_id,
+                         f"tenant={tenant_id}; gün={days}; bitiş={expires.isoformat()}")
+        context.user_data.pop("gift_trial_target_user_id", None)
+        await q.edit_message_text(
+            f"✅ HEDİYE DENEME TANIMLANDI\n\nTelegram ID: {target_id}\n"
+            f"Süre: {days} gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
+            "Kullanıcı @medya-e-can_bot botuna /start gönderdiğinde kendi müşteri yönetim paneli açılacak."
+        )
+        try:
+            await context.bot.send_message(
+                target_id,
+                f"🎁 MEDYAECAN ücretsiz deneme erişimin tanımlandı!\n\n"
+                f"Süre: {days} gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
+                "Müşteri panelini açmak için /start gönder."
+            )
+        except Exception:
+            log.info("Hediye deneme alıcısına doğrudan mesaj gönderilemedi; /start bekleniyor: %s", target_id)
+        return
 
     if q.data == "tenantpanel:home":
         await q.edit_message_text(
@@ -4122,6 +4205,7 @@ def main():
     app.add_handler(CommandHandler("tanitimac", set_promo_setting))
     app.add_handler(CommandHandler("tanitimkapat", set_promo_setting))
     app.add_handler(CommandHandler("tanitimfoto", request_promo_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, gift_trial_user_id_input), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, payment_input_router))
     # Tek fotoğraf yönlendiricisi: VIP tanıtım fotoğrafı bekleniyorsa onu, değilse SITE fotoğrafını kaydeder.
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, save_site_photo))
