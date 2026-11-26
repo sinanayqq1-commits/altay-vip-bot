@@ -1421,12 +1421,24 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                        VALUES(?,?, 'active', ?, 'hediye_deneme', 'active', ?)""",
                     (tenant_id, tenant_name, now().isoformat(), expires.isoformat())
                 )
-            c.execute(
-                """INSERT OR IGNORE INTO tenant_admins
-                   (tenant_id,user_id,role,channel_id,status,added_at)
-                   VALUES(?,?,'owner',NULL,'active',?)""",
-                (tenant_id, target_id, now().isoformat())
-            )
+            owner_row = c.execute(
+                """SELECT 1 FROM tenant_admins
+                   WHERE tenant_id=? AND user_id=? AND role='owner' AND channel_id IS NULL LIMIT 1""",
+                (tenant_id, target_id)
+            ).fetchone()
+            if owner_row:
+                c.execute(
+                    """UPDATE tenant_admins SET status='active'
+                       WHERE tenant_id=? AND user_id=? AND role='owner' AND channel_id IS NULL""",
+                    (tenant_id, target_id)
+                )
+            else:
+                c.execute(
+                    """INSERT INTO tenant_admins
+                       (tenant_id,user_id,role,channel_id,status,added_at)
+                       VALUES(?,?,'owner',NULL,'active',?)""",
+                    (tenant_id, target_id, now().isoformat())
+                )
         log_admin_action(uid, "Hediye deneme üyeliği tanımlandı", target_id,
                          f"tenant={tenant_id}; gün={days}; bitiş={expires.isoformat()}")
         context.user_data.pop("gift_trial_target_user_id", None)
