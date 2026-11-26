@@ -882,8 +882,8 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             return
         current_iban = read_payment_iban(tid)
         context.user_data['pending_iban'] = {'scope': 'tenant', 'tenant_id': tid, 'created_by': uid}
-        body = ("🏦 MÜŞTERİ IBAN BİLGİLERİ\\n\\n"
-                + (f"Kayıtlı IBAN: {current_iban}\\n\\n" if current_iban else "Henüz IBAN kaydedilmemiş.\\n\\n")
+        body = ("🏦 MÜŞTERİ IBAN BİLGİLERİ\n\n"
+                + (f"Kayıtlı IBAN: {current_iban}\n\n" if current_iban else "Henüz IBAN kaydedilmemiş.\n\n")
                 + "IBAN'ını TR ile başlayacak şekilde gönder. Silmek için SİL yaz.")
         await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('⬅️ Ana panel', callback_data='tenantpanel:home')]
@@ -1438,8 +1438,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             return
         current_iban = read_payment_iban("__medyaecan__")
         context.user_data["pending_iban"] = {"scope": "company", "created_by": uid}
-        body = ("🏦 MEDYA E-CAN ÖDEME IBAN'I\\n\\n"
-                + (f"Kayıtlı IBAN: {current_iban}\\n\\n" if current_iban else "Henüz şirket IBAN'ı kaydedilmemiş.\\n\\n")
+        body = ("🏦 MEDYA E-CAN ÖDEME IBAN'I\n\n"
+                + (f"Kayıtlı IBAN: {current_iban}\n\n" if current_iban else "Henüz şirket IBAN'ı kaydedilmemiş.\n\n")
                 + "Yeni IBAN'ı TR ile başlayacak şekilde gönder. Silmek için SİL yaz.")
         await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]
@@ -1672,11 +1672,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 ORDER BY added_at LIMIT 1""", (tenant_id,)).fetchone()
         if owner:
             payment_text = (
-                f"🧾 MEDYA E-CAN — LİSANS ÖDEME BİLGİSİ\\n\\n"
-                f"Paket: {PLAN_CATALOG[package]['name']}\\nSüre: {days} gün\\n"
-                f"Tutar: {amount:,.2f} TL\\nSatış No: #{sale_id}\\n\\n"
-                + (f"🏦 Havale/EFT IBAN: {company_iban}\\n" if company_iban else "🏦 Şirket IBAN bilgisi henüz tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\\n")
-                + "\\nÖdeme yaptıktan sonra dekontu MEDYA E-CAN yöneticisine ilet."
+                f"🧾 MEDYA E-CAN — LİSANS ÖDEME BİLGİSİ\n\n"
+                f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\n"
+                f"Tutar: {amount:,.2f} TL\nSatış No: #{sale_id}\n\n"
+                + (f"🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban else "🏦 Şirket IBAN bilgisi henüz tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
+                + "\nÖdeme yaptıktan sonra dekontu MEDYA E-CAN yöneticisine ilet."
             )
             try:
                 await context.bot.send_message(chat_id=int(owner["user_id"]), text=payment_text)
