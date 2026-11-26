@@ -413,6 +413,7 @@ def tenant_panel_keyboard():
         [InlineKeyboardButton('👥 Üyelerim', callback_data='tenantpanel:members'), InlineKeyboardButton('⏳ Başvurularım', callback_data='tenantpanel:pending')],
         [InlineKeyboardButton('📡 Kanallarım', callback_data='tenantpanel:channels'), InlineKeyboardButton('💳 Ödemelerim', callback_data='tenantpanel:payments')],
         [InlineKeyboardButton('🏦 IBAN bilgilerim', callback_data='tenantpanel:myiban')],
+        [InlineKeyboardButton('🎨 Marka ve görünüm ayarları', callback_data='tenantpanel:branding')],
         [InlineKeyboardButton('🔐 Yetkilerim', callback_data='tenantpanel:roles')],
         [InlineKeyboardButton('🛡 Ekip yönetimi', callback_data='tenantpanel:team')]
     ])
@@ -890,6 +891,37 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
 
     if q.data == 'tenantpanel:home':
         await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
+
+    elif q.data == 'tenantpanel:branding':
+        if not manager_has_permission(uid, tid, None, 'settings'):
+            await q.answer('Marka ayarlarını değiştirme yetkin yok.', show_alert=True)
+            return
+        with connect() as conn:
+            rows = dict(conn.execute("SELECT setting_key,setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key IN ('brand_name','welcome_message')", (tid,)).fetchall())
+        brand = rows.get('brand_name', '')
+        welcome = rows.get('welcome_message', '')
+        await q.edit_message_text(
+            "🎨 MARKA VE GÖRÜNÜM AYARLARI\\n\\n"
+            + f"İşletme adı: {brand or 'Henüz belirlenmedi'}\\n"
+            + f"Karşılama mesajı: {welcome or 'Varsayılan mesaj'}\\n\\n"
+            + "Düzenlemek için aşağıdan seçim yap:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('🏷 İşletme adını değiştir', callback_data='tenantpanel:brandname')],
+                [InlineKeyboardButton('👋 Karşılama mesajını değiştir', callback_data='tenantpanel:brandwelcome')],
+                [InlineKeyboardButton('⬅️ Ana panel', callback_data='tenantpanel:home')]
+            ])
+        )
+
+    elif q.data in ('tenantpanel:brandname', 'tenantpanel:brandwelcome'):
+        if not manager_has_permission(uid, tid, None, 'settings'):
+            await q.answer('Bu ayarı değiştirme yetkin yok.', show_alert=True)
+            return
+        field = 'brand_name' if q.data.endswith('brandname') else 'welcome_message'
+        context.user_data['pending_branding'] = {'tenant_id': tid, 'created_by': uid, 'field': field}
+        prompt = ("İşletmenin görünmesini istediğin adını gönder (en fazla 60 karakter):"
+                  if field == 'brand_name' else
+                  "Karşılama mesajını gönder. Üye adını otomatik eklemek için {name} kullanabilirsin (en fazla 900 karakter):")
+        await q.message.reply_text(prompt)
 
     elif q.data == 'tenantpanel:myiban':
         if not manager_has_permission(uid, tid, None, 'payments'):
@@ -2703,7 +2735,10 @@ async def enforce_vip_membership(update: Update, context: ContextTypes.DEFAULT_T
         with connect() as conn:
             setting = conn.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='welcome_message'",
                                    (tenant_key,)).fetchone()
-        welcome = setting[0] if setting else "👋 Hoş geldin {name}! GOLDEN CLUB sohbetimize hoş geldin."
+        with connect() as conn:
+            brand_row = conn.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='brand_name'", (tenant_key,)).fetchone()
+        brand_name = brand_row[0] if brand_row else channel_name
+        welcome = setting[0] if setting else f"👋 Hoş geldin {{name}}! {brand_name} sohbetimize hoş geldin."
         try:
             await context.bot.send_message(chat_id, welcome.replace("{name}", cm.new_chat_member.user.first_name or "arkadaşımız"))
         except Exception:
@@ -3682,6 +3717,33 @@ async def vip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_gift_trial_user_id"):
         await gift_trial_user_id_input(update, context)
+        return
+
+    pending_branding = context.user_data.get("pending_branding")
+    if pending_branding:
+        actor_id = update.effective_user.id
+        tid = pending_branding.get("tenant_id")
+        if pending_branding.get("created_by") != actor_id or not tid or not manager_can_access(actor_id, tid) or not manager_has_permission(actor_id, tid, None, "settings"):
+            context.user_data.pop("pending_branding", None)
+            await update.effective_message.reply_text("Bu marka ayarı işlemini yapma yetkin yok; işlem iptal edildi.")
+            return
+        raw = (update.effective_message.text or "").strip()
+        field = pending_branding.get("field")
+        limit = 60 if field == "brand_name" else 900
+        if not raw or len(raw) > limit:
+            await update.effective_message.reply_text(f"Metin boş olamaz ve {limit} karakteri geçemez. Tekrar gönder.")
+            return
+        if field == "brand_name" and any(ch in raw for ch in "\\n\\r"):
+            await update.effective_message.reply_text("İşletme adı tek satır olmalı.")
+            return
+        with connect() as conn:
+            conn.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+                VALUES(?,?,?,?) ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+                setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+                (tid, field, raw, now().isoformat()))
+        context.user_data.pop("pending_branding", None)
+        log_admin_action(actor_id, "Müşteri marka ayarı güncellendi", None, f"tenant={tid}; alan={field}")
+        await update.effective_message.reply_text("✅ Marka ayarı kaydedildi.")
         return
 
     pending_iban = context.user_data.get("pending_iban")
