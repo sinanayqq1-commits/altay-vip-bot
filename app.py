@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReplyKeyboardMarkup, KeyboardButton
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler, MessageHandler, filters
 )
@@ -2812,17 +2812,25 @@ async def manual_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def application_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     global LAST_ERROR_NOTICE
-    log.error("Telegram uygulama hatası", exc_info=context.error)
+    error = context.error
+    # Polling is already retried by python-telegram-bot's network retry loop.
+    # A transient Telegram/HTTPX read failure is not an application failure;
+    # keep it out of the admin alert channel and let polling recover.
+    if isinstance(error, NetworkError):
+        log.warning("Telegram bağlantısı geçici olarak kesildi; polling yeniden denenecek: %s", error)
+        return
+
+    log.error("Telegram uygulama hatası", exc_info=error)
     current = now()
     if LAST_ERROR_NOTICE and (current - LAST_ERROR_NOTICE).total_seconds() < 600:
         return
     LAST_ERROR_NOTICE = current
-    error_name = type(context.error).__name__ if context.error else "UnknownError"
+    error_name = type(error).__name__ if error else "UnknownError"
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
                 admin_id,
-                f"⚠️ MEDYAECAN sisteminde bir işlem hatası oluştu.\nTür: {error_name}\nAyrıntı için Railway loglarını kontrol et."
+                f"⚠️ MEDYAECAN sisteminde bir işlem hatası oluştu.\\nTür: {error_name}\\nAyrıntı için Railway loglarını kontrol et."
             )
         except Exception:
             log.exception("Hata bildirimi yöneticiye gönderilemedi: %s", admin_id)
