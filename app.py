@@ -218,9 +218,6 @@ def init_db():
         # Yeni kurulumlarda örnek müşteri veya üçüncü taraf bağlantısı eklenmez.
         # Var olan tenant/link kayıtlarına dokunulmaz.
         
-        # Legacy test entries are retained for data compatibility but deactivated; real chats are registered with /kanalkaydet.
-        c.execute("UPDATE tenant_channels SET status='inactive' WHERE channel_id IN (-5172524860,-1004367177649) AND tenant_id='altay_demo'")
-
         # Keep the old single-channel setting separately identifiable.
         if CHANNEL_ID:
             try:
@@ -245,8 +242,6 @@ def init_db():
                         DO UPDATE SET status='active'""",
                         (owner_id, legacy_channel, now().isoformat()))
                 c.execute("UPDATE tenant_channels SET channel_type='vip' WHERE channel_id=? AND tenant_id='legacy_single' AND channel_type='legacy'", (legacy_channel,))
-                c.execute("UPDATE tenant_channels SET tenant_id='legacy_single', channel_name='GOLDEN CLUB SOHBET' WHERE tenant_id='altay_demo' AND channel_type='chat' AND status='active'")
-                c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
 
