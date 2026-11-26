@@ -325,6 +325,21 @@ def read_payment_iban(tenant_id):
     return row["setting_value"] if row else ""
 
 
+def read_payment_holder(tenant_id):
+    with connect() as conn:
+        row = conn.execute("SELECT setting_value FROM tenant_settings WHERE tenant_id=? AND setting_key='payment_holder'", (tenant_id,)).fetchone()
+    return row["setting_value"] if row else ""
+
+
+def write_payment_holder(tenant_id, holder):
+    with connect() as conn:
+        conn.execute("""INSERT INTO tenant_settings(tenant_id,setting_key,setting_value,updated_at)
+            VALUES(?, 'payment_holder', ?, ?)
+            ON CONFLICT(tenant_id,setting_key) DO UPDATE SET
+            setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+            (tenant_id, holder, now().isoformat()))
+
+
 def write_payment_iban(tenant_id, iban):
     with connect() as conn:
         if iban:
@@ -881,10 +896,11 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             await q.answer('IBAN bilgilerini görüntüleme yetkin yok.', show_alert=True)
             return
         current_iban = read_payment_iban(tid)
-        context.user_data['pending_iban'] = {'scope': 'tenant', 'tenant_id': tid, 'created_by': uid}
+        current_holder = read_payment_holder(tid)
+        context.user_data['pending_iban'] = {'scope': 'tenant', 'tenant_id': tid, 'created_by': uid, 'stage': 'holder'}
         body = ("🏦 MÜŞTERİ IBAN BİLGİLERİ\n\n"
-                + (f"Kayıtlı IBAN: {current_iban}\n\n" if current_iban else "Henüz IBAN kaydedilmemiş.\n\n")
-                + "IBAN'ını TR ile başlayacak şekilde gönder. Silmek için SİL yaz.")
+                + (f"Hesap sahibi: {current_holder}\nIBAN: {current_iban}\n\n" if current_iban else "Henüz IBAN kaydedilmemiş.\n\n")
+                + "Önce hesap sahibinin adını ve soyadını gönder. Ardından IBAN numarasını isteyeceğim. Silmek için SİL yaz.")
         await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('⬅️ Ana panel', callback_data='tenantpanel:home')]
         ]))
@@ -1437,10 +1453,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Bu ayar yalnızca MEDYA E-CAN ana yöneticisine açık.", show_alert=True)
             return
         current_iban = read_payment_iban("__medyaecan__")
-        context.user_data["pending_iban"] = {"scope": "company", "created_by": uid}
+        current_holder = read_payment_holder("__medyaecan__")
+        context.user_data["pending_iban"] = {"scope": "company", "created_by": uid, "stage": "holder"}
         body = ("🏦 MEDYA E-CAN ÖDEME IBAN'I\n\n"
-                + (f"Kayıtlı IBAN: {current_iban}\n\n" if current_iban else "Henüz şirket IBAN'ı kaydedilmemiş.\n\n")
-                + "Yeni IBAN'ı TR ile başlayacak şekilde gönder. Silmek için SİL yaz.")
+                + (f"Hesap sahibi: {current_holder}\nIBAN: {current_iban}\n\n" if current_iban else "Henüz şirket IBAN'ı kaydedilmemiş.\n\n")
+                + "Önce hesap sahibinin adını ve soyadını gönder. Ardından IBAN numarasını isteyeceğim. Silmek için SİL yaz.")
         await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]
         ]))
@@ -1666,6 +1683,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await q.edit_message_text(f"🧾 SATIŞ #{sale_id}\nMüşteri: {tenant['tenant_name']}\nPaket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Ödeme alındı / Onayla",callback_data=f"tenantpanel:saleconfirm:{sale_id}")],[InlineKeyboardButton("💳 Ödeme takibi",callback_data="tenantpanel:payments")]]))
         company_iban = read_payment_iban("__medyaecan__")
+        company_holder = read_payment_holder("__medyaecan__")
         with connect() as c:
             owner = c.execute("""SELECT user_id FROM tenant_admins
                 WHERE tenant_id=? AND role='owner' AND status='active'
@@ -1675,7 +1693,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                 f"🧾 MEDYA E-CAN — LİSANS ÖDEME BİLGİSİ\n\n"
                 f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\n"
                 f"Tutar: {amount:,.2f} TL\nSatış No: #{sale_id}\n\n"
-                + (f"🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban else "🏦 Şirket IBAN bilgisi henüz tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
+                + (f"👤 Hesap sahibi: {company_holder}\n🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban and company_holder else "🏦 Şirket IBAN bilgisi henüz tam tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
                 + "\nÖdeme yaptıktan sonra dekontu MEDYA E-CAN yöneticisine ilet."
             )
             try:
@@ -3239,6 +3257,7 @@ async def create_sale_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR\n"
         f"Ödeme gelince /odemeonay {sale_id} yaz.")
     company_iban = read_payment_iban("__medyaecan__")
+    company_holder = read_payment_holder("__medyaecan__")
     with connect() as c:
         owner = c.execute("""SELECT user_id FROM tenant_admins
             WHERE tenant_id=? AND role='owner' AND status='active'
@@ -3248,7 +3267,7 @@ async def create_sale_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🧾 MEDYA E-CAN — LİSANS ÖDEME BİLGİSİ\n\n"
             f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\n"
             f"Tutar: {amount:,.2f} TL\nSatış No: #{sale_id}\n\n"
-            + (f"🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban else "🏦 Şirket IBAN bilgisi henüz tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
+            + (f"👤 Hesap sahibi: {company_holder}\n🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban and company_holder else "🏦 Şirket IBAN bilgisi henüz tam tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
             + "\nÖdeme yaptıktan sonra dekontu MEDYA E-CAN yöneticisine ilet."
         )
         try:
@@ -3684,21 +3703,33 @@ async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYP
                 context.user_data.pop("pending_iban", None)
                 await update.effective_message.reply_text("Bu müşterinin IBAN ayarını değiştirme yetkin yok.")
                 return
-        raw_iban = (update.effective_message.text or "").strip()
-        if raw_iban.upper() == "SİL":
+        raw_value = (update.effective_message.text or "").strip()
+        if raw_value.upper() == "SİL":
             write_payment_iban(setting_tenant_id, "")
+            with connect() as conn:
+                conn.execute("DELETE FROM tenant_settings WHERE tenant_id=? AND setting_key='payment_holder'", (setting_tenant_id,))
             context.user_data.pop("pending_iban", None)
             log_admin_action(actor_id, "IBAN bilgisi silindi", None, f"kapsam={pending_iban.get('scope')}; müşteri={setting_tenant_id}")
-            await update.effective_message.reply_text("✅ IBAN bilgisi silindi.")
+            await update.effective_message.reply_text("✅ Hesap sahibi adı ve IBAN bilgisi silindi.")
             return
-        normalized_iban = "".join(raw_iban.upper().split())
+        if pending_iban.get("stage") == "holder":
+            holder = " ".join(raw_value.split())
+            if len(holder.split()) < 2 or len(holder) > 100 or any(ch.isdigit() for ch in holder):
+                await update.effective_message.reply_text("Lütfen hesap sahibinin adını ve soyadını yaz. Örnek: Ahmet Yılmaz")
+                return
+            write_payment_holder(setting_tenant_id, holder)
+            pending_iban["stage"] = "iban"
+            await update.effective_message.reply_text("✅ Hesap sahibi kaydedildi. Şimdi TR ile başlayan 26 karakterlik IBAN numarasını gönder.")
+            return
+        normalized_iban = "".join(raw_value.upper().split())
         if not valid_turkish_iban(normalized_iban):
-            await update.effective_message.reply_text("Geçerli bir Türkiye IBAN'ı gönder. TR ile başlamalı ve 26 karakter olmalı. Örnek biçim: TR000000000000000000000000")
+            await update.effective_message.reply_text("Geçerli bir Türkiye IBAN'ı gönder. TR ile başlamalı ve 26 karakter olmalı.")
             return
         write_payment_iban(setting_tenant_id, normalized_iban)
+        holder = read_payment_holder(setting_tenant_id)
         context.user_data.pop("pending_iban", None)
         log_admin_action(actor_id, "IBAN bilgisi güncellendi", None, f"kapsam={pending_iban.get('scope')}; müşteri={setting_tenant_id}")
-        await update.effective_message.reply_text(f"✅ IBAN kaydedildi.\\n{normalized_iban}")
+        await update.effective_message.reply_text(f"✅ IBAN kaydedildi.\\nHesap sahibi: {holder}\\nIBAN: {normalized_iban}")
         return
 
     admin_team = context.user_data.get("pending_admin_team")
