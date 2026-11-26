@@ -274,7 +274,7 @@ def init_db():
                         DO UPDATE SET status='active'""",
                         (owner_id, legacy_channel, now().isoformat()))
                 c.execute("UPDATE tenant_channels SET channel_type='vip' WHERE channel_id=? AND tenant_id='legacy_single' AND channel_type='legacy'", (legacy_channel,))
-                c.execute("UPDATE tenant_channels SET tenant_id='legacy_single', channel_name='GOLDEN CLUB SOHBET' WHERE tenant_id='altay_demo' AND channel_type='chat' AND status='active'")
+                c.execute("UPDATE tenant_channels SET tenant_id='legacy_single', channel_name='MEDYAECAN SOHBET' WHERE tenant_id='altay_demo' AND channel_type='chat' AND status='active'")
                 c.execute("UPDATE tenants SET status='inactive' WHERE tenant_id IN ('altay_demo','musteri_001')")
             except ValueError:
                 log.warning("CHANNEL_ID sayısal değil; eski kanal kaydı eklenemedi.")
@@ -690,7 +690,7 @@ async def approve(context, uid, days=30):
     inv = None
     try:
         inv = await context.bot.create_chat_invite_link(
-            chat_id=channel_id(), name=f"GOLDEN-VIP-{uid}"
+            chat_id=channel_id(), name=f"MEDYAECAN-VIP-{uid}"
         )
         link = "\n\nVIP kanala doğrudan katılım bağlantın:\n" + inv.invite_link
     except Exception:
@@ -1008,7 +1008,7 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
             if not bot_username:
                 raise ValueError("Bot kullanıcı adı bulunamadı.")
             invite_url = f"https://t.me/{bot_username}?start=team_{token}"
-            share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('GOLDEN CLUB ekip daveti', safe='')}"
+            share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('MEDYAECAN ekip daveti', safe='')}"
             await q.edit_message_text(
                 f"🔗 EKİP DAVETİ HAZIR\n\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nAşağıdaki paylaş butonuyla Telegram'da kişiyi seçip gönder. İstersen bağlantıyı kopyalayıp kendin de iletebilirsin:\n{invite_url}\n\nKişi bağlantıyı açıp botu başlattığında Telegram hesabı otomatik tanınacak. Ardından görevini sen seçeceksin.",
                 reply_markup=InlineKeyboardMarkup([
@@ -1630,7 +1630,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("Bot kullanıcı adı alınamadı.", show_alert=True)
             return
         invite_url = f"https://t.me/{bot_username}?start=team_{token}"
-        share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('GOLDEN CLUB ekip daveti', safe='')}"
+        share_url = f"https://t.me/share/url?url={quote(invite_url, safe='')}&text={quote('MEDYAECAN ekip daveti', safe='')}"
         await q.edit_message_text(
             f"🔗 EKİP DAVETİ HAZIR\n\nMüşteri: {tenant_key}\nKanal: {channel['channel_name']}\nGeçerlilik: 24 saat\n\nAşağıdaki paylaş butonuyla Telegram'da kişiyi seçip gönder. İstersen bağlantıyı kopyalayıp kendin de iletebilirsin:\n{invite_url}\n\nKişi bağlantıyı açıp botu başlattığında hesabı otomatik tanınacak; ardından rolünü seçeceksin.",
             reply_markup=InlineKeyboardMarkup([
@@ -3187,7 +3187,7 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             VALUES(?,?,?,?,?,'active') ON CONFLICT(channel_id) DO UPDATE SET
             channel_name=excluded.channel_name, channel_type=excluded.channel_type,
             owner_user_id=COALESCE(tenant_channels.owner_user_id,excluded.owner_user_id), status='active'""",
-            (target_chat.id, tenant_id, 'GOLDEN CLUB SOHBET' if role == 'sohbet' else names[role], 'chat' if role == 'sohbet' else role, user.id))
+            (target_chat.id, tenant_id, 'MEDYAECAN SOHBET' if role == 'sohbet' else names[role], 'chat' if role == 'sohbet' else role, user.id))
         c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
             VALUES(?,?,'owner',NULL,'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'""",
             (tenant_id,user.id,now().isoformat()))
@@ -3569,7 +3569,7 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
         try:
             invite = await context.bot.create_chat_invite_link(
                 chat_id=vip_channel_id,
-                name=f"GOLDEN-VIP-{user_id}",
+                name=f"MEDYAECAN-VIP-{user_id}",
                 member_limit=1,
                 expire_date=now() + timedelta(days=2)
             )
