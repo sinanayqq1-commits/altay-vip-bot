@@ -3729,7 +3729,7 @@ async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYP
         holder = read_payment_holder(setting_tenant_id)
         context.user_data.pop("pending_iban", None)
         log_admin_action(actor_id, "IBAN bilgisi güncellendi", None, f"kapsam={pending_iban.get('scope')}; müşteri={setting_tenant_id}")
-        await update.effective_message.reply_text(f"✅ IBAN kaydedildi.\\nHesap sahibi: {holder}\\nIBAN: {normalized_iban}")
+        await update.effective_message.reply_text(f"✅ IBAN kaydedildi.\nHesap sahibi: {holder}\nIBAN: {normalized_iban}")
         return
 
     admin_team = context.user_data.get("pending_admin_team")
