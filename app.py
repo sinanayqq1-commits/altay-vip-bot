@@ -3355,7 +3355,14 @@ async def tenant_application_callbacks(update: Update, context: ContextTypes.DEF
 def manager_has_permission(uid, tenant_id, cid, permission):
     if admin(uid): return True
     with connect() as conn:
-        if cid is None:
+        if cid is None and permission == "settings":
+            # Tenant-wide settings require a tenant-wide role; channel-scoped staff
+            # must not be able to alter shared links, promo settings, or support data.
+            rows = conn.execute("""SELECT role FROM tenant_admins
+                WHERE tenant_id=? AND user_id=? AND status='active'
+                  AND channel_id IS NULL""",
+                (tenant_id, uid)).fetchall()
+        elif cid is None:
             rows = conn.execute("""SELECT role FROM tenant_admins
                 WHERE tenant_id=? AND user_id=? AND status='active'""",
                 (tenant_id, uid)).fetchall()
