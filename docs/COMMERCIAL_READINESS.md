@@ -54,6 +54,14 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 - [ ] Otomatik testler ve test veritabanıyla regresyon kontrolü
 - [ ] Kullanıcı sözleşmesi, gizlilik metni ve destek kapsamı
 
+## İnceleme sırasında bulunan ve hazırlık dalında giderilen yetki açığı
+
+İlk incelemede `/kanalkaydet` komutunda tenant erişimi olan herhangi bir ekip kullanıcısının kanal kaydı yapabildiği ve işlem sonunda kendisine tenant genelinde `owner` rolü yazıldığı görüldü. Bu durum, kanal kapsamlı bir ekip kullanıcısının yetkisini yükseltmesine yol açabilirdi.
+
+**Hazırlık dalında düzeltildi:** Kanal kaydı artık ana yöneticiye veya ilgili tenant'ın kanal-genel `owner` rolüne sahip müşterisine sınırlandırılıyor. Bu değişiklik yalnızca `medyaecan-commercial-prep` dalındadır; canlı servise aktarılmamıştır.
+
+**Takip testi:** Moderator, finance, publisher ve kanal kapsamlı manager hesaplarıyla kanal kaydının reddedildiği; tenant owner ve ana yöneticiyle kabul edildiği ayrı test ortamında doğrulanmalıdır.
+
 ## İlk statik incelemede görülen riskler
 
 | Alan | Gözlem | Öncelik |
@@ -64,7 +72,7 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 | Eski uyumluluk | Tek kanallı/legacy akışların bazı komut ve ayarları hâlâ mevcut | Orta |
 | Ödeme | Satış kaydı ve manuel yönetici onayı mevcut; ödeme sağlayıcısı entegrasyonu doğrulanmadı | Orta |
 | Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; restore testi yok | Yüksek |
-| Yetki modeli | Rol ve kanal kapsamı kontrolleri mevcut; tenant izolasyonu test edilmedi | Yüksek |
+| Yetki modeli | Kanal kaydında yetki yükseltme açığı bulundu ve hazırlık dalında sınırlandı; tam tenant izolasyonu testi bekliyor | Yüksek |
 
 ## Teknik sınırlar
 
