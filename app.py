@@ -3733,7 +3733,7 @@ async def payment_input_router(update: Update, context: ContextTypes.DEFAULT_TYP
         if not raw or len(raw) > limit:
             await update.effective_message.reply_text(f"Metin boş olamaz ve {limit} karakteri geçemez. Tekrar gönder.")
             return
-        if field == "brand_name" and any(ch in raw for ch in "\\n\\r"):
+        if field == "brand_name" and any(ch in raw for ch in "\n\r"):
             await update.effective_message.reply_text("İşletme adı tek satır olmalı.")
             return
         with connect() as conn:
