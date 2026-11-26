@@ -1,4 +1,4 @@
-# MEDYAECAN BOT — Satış İlanı Taslağı
+# MEDYAECAN BOT — Aylık Kiralama İlanı Taslağı
 
 ## Çok müşterili Telegram yönetim otomasyonu
 
@@ -24,16 +24,16 @@ Telegram VIP topluluklarını, yayın kanallarını ve müşteri ekiplerini tek 
 - Railway üzerinde çalıştırılabilir dağıtım yapısı
 - Ortam değişkenleriyle yapılandırma
 
-### Devir kapsamı
+### Kiralama kapsamı
 
-Satış anlaşmasına göre kaynak kod, kurulum dokümanları, yapılandırma desteği ve belirlenen süre boyunca teknik devir desteği dahil edilebilir.
+Kiralama kapsamında müşteriye özel kurulum, müşteri paneli, kanal/ekip yapılandırması ve sözleşmede belirlenen süre boyunca teknik destek sunulabilir. Kaynak kod devri kiralama kapsamına dahil değildir.
 
 ### Şeffaflık notu
 
-Mevcut sürümde satış/ödeme akışı yönetici tarafından manuel onaylanır. Otomatik kart tahsilatı veya ödeme kuruluşu entegrasyonu vaat edilmemektedir. Paket fiyatları, marka, hosting, bot hesabı, müşteri verileri ve destek kapsamı devir sözleşmesinde ayrıca belirlenir.
+Mevcut sürümde kiralama ödemesi yönetici tarafından manuel onaylanır. Otomatik kart tahsilatı veya ödeme kuruluşu entegrasyonu doğrulanmamıştır. Aylık ücretler, kurulum bedeli olup olmayacağı, destek kapsamı, kullanım sınırları ve iptal koşulları müşteri sözleşmesinde netleştirilmelidir.
 
 ### Görüşme
 
-Ciddi alıcılar için canlı demo, teknik inceleme ve kapsamlı devir planı sunulabilir.
+Kiralama öncesinde canlı demo, müşteri ihtiyaçlarına göre paket önerisi ve kurulum planı sunulabilir.
 
 **MEDYAECAN — Teknoloji. Güç ve Kontrol.**
