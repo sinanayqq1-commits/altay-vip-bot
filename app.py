@@ -399,19 +399,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         if bot_username:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🧡 MEDYAECAN paketleri ve fiyatları",
+                "🧡 MEDYAECAN kiralama paketleri",
                 url=f"https://t.me/{bot_username}?start=medyaecan_sales"
             )]])
             await update.effective_message.reply_text(
                 "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\n"
                 "Telegram botları, müşteri ve VIP kanal yönetimi çözümleri.\n\n"
-                "📦 SATIŞ PAKETLERİMİZ\n\n"
+                "📦 AYLIK KİRALAMA PAKETLERİMİZ\n\n"
                 + "\n".join(
                     f"• {PLAN_CATALOG[k]['name']} — {PLAN_CATALOG[k]['price']:,} TL/ay\n"
                     f"  {PLAN_CATALOG[k]['channels']} kanal/grup • {PLAN_CATALOG[k]['team']} ekip kullanıcısı"
                     for k in ("starter", "professional", "vip")
                 )
-                + "\n\nDetaylı bilgi ve satın alma için aşağıdaki butona dokun.\n"
+                + "\n\nKiralama, demo ve kurulum için aşağıdaki butona dokun.\n"
                 "MEDYAECAN VIP üyelik sistemi ile yazılım satış paketleri ayrı süreçlerdir.",
                 reply_markup=kb
             )
@@ -460,7 +460,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("✅ Davetin alındı. Müşteri görevini seçtikten sonra ekip yetkin aktif olacak.")
         return
 
-    # MEDYAECAN grup tanıtımındaki paket butonu: doğrudan satış ekranını aç.
+    # MEDYAECAN grup tanıtımındaki paket butonu: kiralama bilgi ekranını aç.
     if chat and chat.type == "private" and context.args and context.args[0] == "medyaecan_sales":
         package_lines = []
         for package_key in ("starter", "professional", "vip"):
@@ -471,14 +471,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"   • {package['team']} ekip kullanıcısı"
             )
         sales_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("💬 Satış ekibiyle görüş", callback_data="support")
+            InlineKeyboardButton("💬 Kiralama ve demo için görüş", callback_data="support")
         ]])
         await update.effective_message.reply_text(
             "🧡 MEDYAECAN | YAZILIM & OTOMASYON\n\n"
             "İşletmenize özel Telegram botları ve profesyonel yönetim panelleri.\n\n"
-            "SATIŞ PAKETLERİMİZ\n\n"
+            "AYLIK KİRALAMA PAKETLERİMİZ\n\n"
             + "\n\n".join(package_lines)
-            + "\n\nPaket seçimi, demo ve kurulum için satış ekibimize ulaşın.",
+            + "\n\nKiralama paketi, demo ve kurulum için ekibimizle görüşün.",
             reply_markup=sales_kb
         )
         return
