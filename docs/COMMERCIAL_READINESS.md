@@ -39,10 +39,10 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 - [ ] GitHub deposunun erişimi sınırlandırılmalı. Depo şu an public görünüyor. Münhasır ticari satış düşünülüyorsa erişim kapatılmalı; mevcut işbirliği erişimleri önce gözden geçirilmeli.
 - [ ] `DB_PATH` değeri güvenli biçimde doğrulanmalı ve kalıcı disk yoluna bağlanmalı.
 - [x] Yedekten geri yükleme işlemi daha önce başarıyla tamamlandı (kullanıcı teyidi).
-- [ ] Demo/test tenant kayıtları ve başlangıçta otomatik eklenen örnek bağlantılar kaldırılmalı veya yapılandırılabilir hale getirilmeli.
+- [x] Yeni kurulumlarda demo tenant ve sabit örnek/affiliate bağlantı eklenmesi durduruldu; mevcut veritabanındaki eski kayıtlar silinmez veya otomatik değiştirilmez. Mevcut kayıtlar ayrı, kontrollü temizlik kararı gerektirir.
 - [ ] Uygulamadaki sabit örnek/affiliate bağlantıları ve eski marka/metin kalıntıları temizlenmeli.
 - [ ] Müşteri A'nın yöneticisinin müşteri B'nin kanal, üye, başvuru, ödeme ve ayarlarına erişemediği test edilmeli.
-- [ ] Paket limitleri, deneme süresi, lisans uzatma ve ödeme onayının uçtan uca testleri yapılmalı.
+- [ ] Paket limitleri, deneme süresi, lisans uzatma ve ödeme onayının uçtan uca testleri yapılmalı. Hazırlık dalında 14 günlük deneme 2 kanal / 2 ekip kullanıcısı ile sınırlandı; tanımsız paket artık limitsiz geçiş sağlamıyor.
 - [ ] Ödeme akışının yönetici tarafından manuel onaylandığı açıkça belgelenmeli; otomatik ödeme entegrasyonu varmış gibi sunulmamalı.
 
 ### P1 — Profesyonel ürünleştirme
@@ -53,6 +53,14 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 - [ ] Sağlık kontrolü, hata alarmı ve işlem günlüklerinin gözden geçirilmesi
 - [ ] Otomatik testler ve test veritabanıyla regresyon kontrolü
 - [ ] Kullanıcı sözleşmesi, gizlilik metni ve destek kapsamı
+
+## Hazırlık dalında yapılan ek ürünleştirme düzeltmeleri
+
+- Yeni kurulumlarda eski demo tenant'lar ve sabit örnek/affiliate site-sosyal bağlantıları otomatik eklenmiyor.
+- Mevcut veritabanındaki eski demo kayıtları silinmiyor veya başlangıç sırasında değiştirilmemesi için ilgili otomatik mutasyonlar kaldırıldı.
+- 14 günlük deneme planı 2 aktif kanal/grup ve 2 ekip kullanıcısı ile sınırlandırıldı.
+- Paket adı tanımsızsa limit kontrolü artık sessizce limitsiz geçiş vermiyor; işlem ana yöneticiye yönlendiriliyor.
+- Bu değişiklikler yalnızca hazırlık dalında. Canlı sistemde uygulanmadı ve henüz ayrı test ortamında çalıştırılmış test sonucu değildir.
 
 ## İnceleme sırasında bulunan ve hazırlık dalında giderilen yetki açığı
 
@@ -68,7 +76,7 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 |---|---|---|
 | Depo erişimi | Kaynak kod deposu public | Kritik ticari/IP riski |
 | Veritabanı | SQLite; kalıcı disk var, DB_PATH eşleşmesi teyit edilmedi | Yüksek |
-| Örnek veriler | Başlangıçta demo tenant ve sabit link kayıtları oluşturuluyor | Yüksek |
+| Örnek veriler | Yeni kurulum seed'leri kaldırıldı; eski veritabanındaki demo kayıtlar korunur ve kontrollü temizlik bekler | Orta |
 | Eski uyumluluk | Tek kanallı/legacy akışların bazı komut ve ayarları hâlâ mevcut | Orta |
 | Ödeme | Satış kaydı ve manuel yönetici onayı mevcut; ödeme sağlayıcısı entegrasyonu doğrulanmadı | Orta |
 | Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; yedekten geri yükleme daha önce başarıyla tamamlandı (kullanıcı teyidi) | Düşük |
