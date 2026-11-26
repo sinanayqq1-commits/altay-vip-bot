@@ -2905,6 +2905,20 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text('Bu kanal kaydı için müşteri yetkin bulunmuyor. Ana yönetici önce /musteriekle ile müşteri oluşturmalı.')
         return
 
+    # Channel registration changes tenant resources and must not let a channel-scoped
+    # moderator/publisher/finance user promote themselves to tenant owner.
+    if not admin(user.id):
+        with connect() as conn:
+            is_owner = conn.execute(
+                """SELECT 1 FROM tenant_admins
+                   WHERE tenant_id=? AND user_id=? AND role='owner'
+                     AND channel_id IS NULL AND status='active' LIMIT 1""",
+                (tenant_id, user.id)
+            ).fetchone()
+        if not is_owner:
+            await msg.reply_text('Kanal ekleme yetkisi yalnızca müşteri sahibine açıktır.')
+            return
+
     if len(context.args) not in (1, 2) or context.args[0].lower() not in ("sohbet", "genel", "vip"):
         await msg.reply_text(
             "Kullanım: /kanalkaydet sohbet  |  /kanalkaydet genel @kanaladi  |  /kanalkaydet vip @kanaladi\n"
