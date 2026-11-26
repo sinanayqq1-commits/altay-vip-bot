@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReplyKeyboardMarkup, KeyboardButton
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, ChatJoinRequestHandler, MessageHandler, filters
 )
@@ -2003,9 +2003,9 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         if not row:
             await q.answer("Satış bulunamadı.", show_alert=True); return
         state = "ÖDEME BEKLİYOR" if row["status"] == "pending" else "ÖDENDİ"
-        body = (f"🧾 SATIŞ #{sale_id}\\nMüşteri: {row['tenant_name'] or row['tenant_id']}\\n"
-                f"Paket: {PLAN_CATALOG.get(row['package_name'], {}).get('name', row['package_name'])}\\n"
-                f"Süre: {row['duration_days']} gün\\nTutar: {row['amount']:,.2f} TL\\nDurum: {state}")
+        body = (f"🧾 SATIŞ #{sale_id}\nMüşteri: {row['tenant_name'] or row['tenant_id']}\n"
+                f"Paket: {PLAN_CATALOG.get(row['package_name'], {}).get('name', row['package_name'])}\n"
+                f"Süre: {row['duration_days']} gün\nTutar: {row['amount']:,.2f} TL\nDurum: {state}")
         actions = []
         if row["status"] == "pending":
             actions.append([InlineKeyboardButton("✅ Ödeme alındı / Onayla", callback_data=f"tenantpanel:saleconfirm:{sale_id}")])
@@ -2843,12 +2843,20 @@ async def manual_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def application_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     global LAST_ERROR_NOTICE
-    log.error("Telegram uygulama hatası", exc_info=context.error)
+    error = context.error
+    # Polling is already retried by python-telegram-bot's network retry loop.
+    # A transient Telegram/HTTPX read failure is not an application failure;
+    # keep it out of the admin alert channel and let polling recover.
+    if isinstance(error, NetworkError):
+        log.warning("Telegram bağlantısı geçici olarak kesildi; polling yeniden denenecek: %s", error)
+        return
+
+    log.error("Telegram uygulama hatası", exc_info=error)
     current = now()
     if LAST_ERROR_NOTICE and (current - LAST_ERROR_NOTICE).total_seconds() < 600:
         return
     LAST_ERROR_NOTICE = current
-    error_name = type(context.error).__name__ if context.error else "UnknownError"
+    error_name = type(error).__name__ if error else "UnknownError"
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
