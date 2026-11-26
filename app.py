@@ -3217,7 +3217,7 @@ async def create_sale_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         days = int(context.args[2])
         if package not in PLAN_CATALOG: raise ValueError()
-        amount = float(context.args[3].replace(",", ".")) if len(context.args) == 4 else float(PLAN_CATALOG[package]["price"])
+        amount = float(context.args[3].replace(",", ".")) if len(context.args) == 4 else round(PLAN_CATALOG[package]["price"] * days / 30)
         if not 1 <= days <= 3650 or amount <= 0: raise ValueError()
     except ValueError:
         await update.effective_message.reply_text("Paket starter/professional/vip olmalı; gün 1–3650, tutar pozitif olmalı.")
@@ -3236,8 +3236,25 @@ async def create_sale_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                      f"Satış #{sale_id}; {tenant_id}; {package}; {amount:.2f} TL; {days} gün; bekliyor")
     await update.effective_message.reply_text(
         f"🧾 SATIŞ KAYDI OLUŞTU\nSatış No: #{sale_id}\nMüşteri: {tenant['tenant_name']}\n"
-        f"Paket: {PLAN_CATALOG[package]['name']}\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR\n"
+        f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\nTutar: {amount:,.2f} TL\nDurum: ÖDEME BEKLİYOR\n"
         f"Ödeme gelince /odemeonay {sale_id} yaz.")
+    company_iban = read_payment_iban("__medyaecan__")
+    with connect() as c:
+        owner = c.execute("""SELECT user_id FROM tenant_admins
+            WHERE tenant_id=? AND role='owner' AND status='active'
+            ORDER BY added_at LIMIT 1""", (tenant_id,)).fetchone()
+    if owner:
+        payment_text = (
+            f"🧾 MEDYA E-CAN — LİSANS ÖDEME BİLGİSİ\n\n"
+            f"Paket: {PLAN_CATALOG[package]['name']}\nSüre: {days} gün\n"
+            f"Tutar: {amount:,.2f} TL\nSatış No: #{sale_id}\n\n"
+            + (f"🏦 Havale/EFT IBAN: {company_iban}\n" if company_iban else "🏦 Şirket IBAN bilgisi henüz tanımlanmamış. Lütfen MEDYA E-CAN ile iletişime geç.\n")
+            + "\nÖdeme yaptıktan sonra dekontu MEDYA E-CAN yöneticisine ilet."
+        )
+        try:
+            await context.bot.send_message(chat_id=int(owner["user_id"]), text=payment_text)
+        except Exception:
+            log.info("Lisans ödeme bilgisi müşteriye gönderilemedi: satış=%s tenant=%s", sale_id, tenant_id)
 
 
 async def confirm_sale_payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
