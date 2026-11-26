@@ -62,6 +62,12 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 - Paket adı tanımsızsa limit kontrolü artık sessizce limitsiz geçiş vermiyor; işlem ana yöneticiye yönlendiriliyor.
 - Bu değişiklikler yalnızca hazırlık dalında. Canlı sistemde uygulanmadı ve henüz ayrı test ortamında çalıştırılmış test sonucu değildir.
 
+## Tenant izolasyonu incelemesinde bulunan ek yetki riski
+
+`manager_has_permission` fonksiyonunda kanal kapsamlı bir personelin `cid=None` ile yapılan tenant-geneli `settings` kontrollerini geçebilme riski görüldü. Bu, ortak SITE bağlantıları, tanıtım ayarları ve destek kayıtları gibi tenant-geneli ayarlara erişim sağlayabilirdi.
+
+**Hazırlık dalında sınırlandı:** `settings` izni tenant-geneli isteniyorsa artık yalnızca `channel_id IS NULL` kapsamındaki tenant-geneli rol kabul ediliyor. Kanal kapsamlı personelin üyelik/başvuru/ödeme görüntüleme ve yayın akışları kendi kanal kapsamı filtreleriyle çalışmaya devam ediyor. Bu değişiklik statik kod incelemesiyle yapıldı; ayrı test tenant'larında rol bazlı çalıştırma testleri henüz yapılmadı.
+
 ## İnceleme sırasında bulunan ve hazırlık dalında giderilen yetki açığı
 
 İlk incelemede `/kanalkaydet` komutunda tenant erişimi olan herhangi bir ekip kullanıcısının kanal kaydı yapabildiği ve işlem sonunda kendisine tenant genelinde `owner` rolü yazıldığı görüldü. Bu durum, kanal kapsamlı bir ekip kullanıcısının yetkisini yükseltmesine yol açabilirdi.
@@ -80,7 +86,7 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 | Eski uyumluluk | Tek kanallı/legacy akışların bazı komut ve ayarları hâlâ mevcut | Orta |
 | Ödeme | Satış kaydı ve manuel yönetici onayı mevcut; ödeme sağlayıcısı entegrasyonu doğrulanmadı | Orta |
 | Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; yedekten geri yükleme daha önce başarıyla tamamlandı (kullanıcı teyidi) | Düşük |
-| Yetki modeli | Kanal kaydında yetki yükseltme açığı bulundu ve hazırlık dalında sınırlandı; tam tenant izolasyonu testi bekliyor | Yüksek |
+| Yetki modeli | Kanal kaydı yetki yükseltmesi ve kanal kapsamlı personelin tenant-geneli ayar erişimi hazırlık dalında sınırlandı; rol bazlı testler bekliyor | Yüksek |
 
 ## Teknik sınırlar
 
