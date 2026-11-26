@@ -412,6 +412,7 @@ def tenant_panel_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('👥 Üyelerim', callback_data='tenantpanel:members'), InlineKeyboardButton('⏳ Başvurularım', callback_data='tenantpanel:pending')],
         [InlineKeyboardButton('📡 Kanallarım', callback_data='tenantpanel:channels'), InlineKeyboardButton('💳 Ödemelerim', callback_data='tenantpanel:payments')],
+        [InlineKeyboardButton('📣 Otomatik duyurularım', callback_data='tenantpanel:autoposts')],
         [InlineKeyboardButton('🏦 IBAN bilgilerim', callback_data='tenantpanel:myiban')],
         [InlineKeyboardButton('🎨 Marka ve görünüm ayarları', callback_data='tenantpanel:branding')],
         [InlineKeyboardButton('🔐 Yetkilerim', callback_data='tenantpanel:roles')],
@@ -892,6 +893,19 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
     if q.data == 'tenantpanel:home':
         await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
 
+    elif q.data == 'tenantpanel:autoposts':
+        if not manager_has_permission(uid, tid, None, 'broadcast'):
+            await q.answer('Otomatik duyuru yönetme yetkin yok.', show_alert=True)
+            return
+        with connect() as c:
+            rows = c.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements WHERE tenant_id=? ORDER BY send_time", (tid,)).fetchall()
+        lines = ['📣 OTOMATİK DUYURULARIM', '', 'Yeni duyuru eklemek için:', '/otomatikduyuru 09:00 | Günaydın! Bugün fırsatlarımızı kaçırmayın.', '', 'Duyurular her gün seçtiğin saatte müşterinin kayıtlı kanallarına gönderilir.', 'Listelemek için: /otomatikduyurular', 'Silmek için: /otomatikduyurusil ID', '']
+        for row in rows:
+            lines.append(f"#{row['announcement_id']} — {row['send_time']} — {'Aktif' if row['enabled'] else 'Kapalı'}\n{row['message'][:120]}")
+        if not rows:
+            lines.append('Henüz otomatik duyuru eklenmedi.')
+        await q.edit_message_text('\n'.join(lines)[:3900], reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Müşteri paneli', callback_data='tenantpanel:home')]]))
+
     elif q.data == 'tenantpanel:branding':
         if not manager_has_permission(uid, tid, None, 'settings'):
             await q.answer('Marka ayarlarını değiştirme yetkin yok.', show_alert=True)
@@ -901,9 +915,9 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
         brand = rows.get('brand_name', '')
         welcome = rows.get('welcome_message', '')
         await q.edit_message_text(
-            "🎨 MARKA VE GÖRÜNÜM AYARLARI\\n\\n"
-            + f"İşletme adı: {brand or 'Henüz belirlenmedi'}\\n"
-            + f"Karşılama mesajı: {welcome or 'Varsayılan mesaj'}\\n\\n"
+            "🎨 MARKA VE GÖRÜNÜM AYARLARI\n\n"
+            + f"İşletme adı: {brand or 'Henüz belirlenmedi'}\n"
+            + f"Karşılama mesajı: {welcome or 'Varsayılan mesaj'}\n\n"
             + "Düzenlemek için aşağıdan seçim yap:",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton('🏷 İşletme adını değiştir', callback_data='tenantpanel:brandname')],
@@ -4295,37 +4309,64 @@ async def customer_team_revoke(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.effective_message.reply_text(f"✅ {target} kullanıcısının {channel['channel_name']} kanalındaki {cur.rowcount} yetkisi kaldırıldı.")
 
 
+def recurring_announcement_tenant(update, context, permission='broadcast'):
+    uid = update.effective_user.id
+    if admin(uid):
+        return 'legacy_single' if permission == 'broadcast' else None
+    tid = current_tenant_id(uid, context)
+    if not tid or not manager_can_access(uid, tid) or not manager_has_permission(uid, tid, None, permission):
+        return None
+    return tid
+
+
 async def recurring_announcement_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only(update): return
-    raw=update.effective_message.text.partition(" ")[2].strip()
-    if "|" not in raw:
-        await update.effective_message.reply_text("Kullanım: /otomatikduyuru SS:DD | Her gün gönderilecek mesaj"); return
-    clock,message=[x.strip() for x in raw.split("|",1)]
+    tid = recurring_announcement_tenant(update, context)
+    if not tid:
+        await update.effective_message.reply_text('Otomatik duyuru yönetme yetkin bulunmuyor.')
+        return
+    raw = update.effective_message.text.partition(' ')[2].strip()
+    if '|' not in raw:
+        await update.effective_message.reply_text('Kullanım: /otomatikduyuru SS:DD | Her gün gönderilecek mesaj\nÖrnek: /otomatikduyuru 09:00 | Günaydın!')
+        return
+    clock, message = [x.strip() for x in raw.split('|', 1)]
     try:
-        datetime.strptime(clock,"%H:%M")
-        if not message or len(message)>3500: raise ValueError()
+        datetime.strptime(clock, '%H:%M')
+        if not message or len(message) > 3500:
+            raise ValueError()
     except ValueError:
-        await update.effective_message.reply_text("Saat SS:DD olmalı; mesaj 1–3500 karakter olmalı."); return
+        await update.effective_message.reply_text('Saat SS:DD biçiminde olmalı; mesaj 1–3500 karakter olmalı.')
+        return
     with connect() as conn:
-        cur=conn.execute("INSERT INTO recurring_announcements(tenant_id,send_time,message,enabled) VALUES('legacy_single',?,?,1)",(clock,message))
-    log_admin_action(update.effective_user.id,"Otomatik duyuru oluşturuldu",None,f"#{cur.lastrowid}; {clock}")
-    await update.effective_message.reply_text(f"✅ Her gün {clock} için duyuru kaydedildi. ID: {cur.lastrowid}")
+        cur = conn.execute('INSERT INTO recurring_announcements(tenant_id,send_time,message,enabled) VALUES(?,?,?,1)', (tid, clock, message))
+    log_admin_action(update.effective_user.id, 'Otomatik duyuru oluşturuldu', None, f'tenant={tid}; #{cur.lastrowid}; {clock}')
+    await update.effective_message.reply_text(f'✅ Otomatik duyuru kaydedildi.\nSaat: {clock} (Türkiye saati)\nTekrar: Her gün\nDuyuru ID: {cur.lastrowid}\n\nBot, bu müşterinin aktif kanallarına otomatik yayınlayacak.')
+
 
 async def recurring_announcement_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only(update): return
+    tid = recurring_announcement_tenant(update, context)
+    if not tid:
+        await update.effective_message.reply_text('Otomatik duyuruları görüntüleme yetkin bulunmuyor.')
+        return
     with connect() as conn:
-        rows=conn.execute("SELECT announcement_id,send_time,message,enabled FROM recurring_announcements WHERE tenant_id='legacy_single' ORDER BY send_time").fetchall()
-    lines=["📣 OTOMATİK DUYURULAR"]+[f"#{r['announcement_id']} — {r['send_time']} — {'Aktif' if r['enabled'] else 'Kapalı'}\n{r['message'][:150]}" for r in rows]
-    await update.effective_message.reply_text("\n\n".join(lines)[:4000] if rows else "Otomatik duyuru yok.")
+        rows = conn.execute('SELECT announcement_id,send_time,message,enabled FROM recurring_announcements WHERE tenant_id=? ORDER BY send_time', (tid,)).fetchall()
+    lines = ['📣 OTOMATİK DUYURULAR'] + [f"#{r['announcement_id']} — {r['send_time']} — {'Aktif' if r['enabled'] else 'Kapalı'}\n{r['message'][:150]}" for r in rows]
+    await update.effective_message.reply_text('\n\n'.join(lines)[:4000] if rows else 'Henüz otomatik duyuru yok.')
+
 
 async def recurring_announcement_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only(update): return
-    if len(context.args)!=1 or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Kullanım: /otomatikduyurusil ID"); return
-    aid=int(context.args[0])
-    with connect() as conn: cur=conn.execute("DELETE FROM recurring_announcements WHERE announcement_id=? AND tenant_id='legacy_single'",(aid,))
-    log_admin_action(update.effective_user.id,"Otomatik duyuru silindi",None,f"#{aid}")
-    await update.effective_message.reply_text("Duyuru silindi." if cur.rowcount else "Duyuru bulunamadı.")
+    tid = recurring_announcement_tenant(update, context)
+    if not tid:
+        await update.effective_message.reply_text('Otomatik duyuru silme yetkin bulunmuyor.')
+        return
+    if len(context.args) != 1 or not context.args[0].isdigit():
+        await update.effective_message.reply_text('Kullanım: /otomatikduyurusil ID')
+        return
+    aid = int(context.args[0])
+    with connect() as conn:
+        cur = conn.execute('DELETE FROM recurring_announcements WHERE announcement_id=? AND tenant_id=?', (aid, tid))
+    log_admin_action(update.effective_user.id, 'Otomatik duyuru silindi', None, f'tenant={tid}; #{aid}')
+    await update.effective_message.reply_text('✅ Duyuru silindi.' if cur.rowcount else 'Bu müşteri hesabında böyle bir duyuru bulunamadı.')
+
 
 async def set_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only(update): return
