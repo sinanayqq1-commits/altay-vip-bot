@@ -3137,15 +3137,13 @@ from telegram.ext import MessageHandler, filters
 
 
 async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Register a Telegram group/channel. Main admins can register channels from private chat."""
+    """Register a tenant chat group or broadcast channel, including private-chat ID registration."""
     chat = update.effective_chat
     msg = update.effective_message
     user = update.effective_user
-    if not chat or not msg:
+    if not chat or not msg or not user:
         return
 
-    if not user:
-        return
     tenant_id = current_tenant_id(user.id, context)
     if not tenant_id or not manager_can_access(user.id, tenant_id):
         await msg.reply_text('Bu kanal kaydı için müşteri yetkin bulunmuyor. Ana yönetici önce /musteriekle ile müşteri oluşturmalı.')
@@ -3153,39 +3151,43 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(context.args) not in (1, 2) or context.args[0].lower() not in ("sohbet", "genel", "vip"):
         await msg.reply_text(
-            "Kullanım: /kanalkaydet sohbet  |  /kanalkaydet genel @kanaladi  |  /kanalkaydet vip @kanaladi\n"
-            "Yayın kanallarını botla özel sohbetten de kaydedebilirsin."
+            "Kullanım:\n"
+            "/kanalkaydet sohbet - grupta veya özel sohbette ID ile\n"
+            "/kanalkaydet sohbet -100...\n"
+            "/kanalkaydet vip -100...\n"
+            "/kanalkaydet genel -100..."
         )
         return
 
     role = context.args[0].lower()
-    names = {"sohbet": "ALTAY VIP Sohbet Grubu", "genel": "ALTAY Genel Yayın Kanalı", "vip": "ALTAY VIP Yayın Kanalı"}
+    names = {"sohbet": "MEDYAECAN Sohbet Grubu", "genel": "MEDYAECAN Genel Yayın Kanalı", "vip": "MEDYAECAN VIP Yayın Kanalı"}
     target_chat = chat
 
-    if role == "sohbet":
+    if chat.type == "private" and len(context.args) == 2:
+        target = context.args[1]
+        try:
+            target_chat = await context.bot.get_chat(target)
+        except Exception:
+            log.exception("Telegram hedefi bulunamadı: %s", target)
+            await msg.reply_text("Hedef bulunamadı. Telegram ID'sini kontrol et ve botun ilgili gruba/kanala yönetici olarak eklendiğinden emin ol.")
+            return
+        if role == "sohbet" and target_chat.type not in ("group", "supergroup"):
+            await msg.reply_text("Sohbet için verdiğin ID bir Telegram grubu değil.")
+            return
+        if role in ("vip", "genel") and target_chat.type != "channel":
+            await msg.reply_text("VIP/genel yayın kaydı için verdiğin ID bir yayın kanalı değil.")
+            return
+    elif role == "sohbet":
         if chat.type not in ("group", "supergroup") or len(context.args) != 1:
-            await msg.reply_text("sohbet kaydı yalnızca sohbet grubunun içinde /kanalkaydet sohbet komutuyla yapılır.")
+            await msg.reply_text("Sohbet grubunun içinden /kanalkaydet sohbet yazabilir veya botun özel sohbetinden /kanalkaydet sohbet -100... kullanabilirsin.")
             return
     else:
-        # Channel can be registered in-place by a channel admin, or from private chat
-        # by the configured primary admin using the channel username / numeric ID.
         if chat.type == "channel":
             if len(context.args) != 1 or not msg.sender_chat or msg.sender_chat.id != chat.id:
                 await msg.reply_text("Kanal içinden kayıt için komutu kanal yöneticisi olarak paylaşmalısın.")
                 return
-        elif chat.type == "private" and len(context.args) == 2:
-            target = context.args[1]
-            try:
-                target_chat = await context.bot.get_chat(target)
-            except Exception:
-                log.exception("Kanal bulunamadı: %s", target)
-                await msg.reply_text("Kanal bulunamadı. @kanaladi doğru mu ve bot kanala yönetici olarak eklendi mi kontrol et.")
-                return
-            if target_chat.type != "channel":
-                await msg.reply_text("Verdiğin hedef bir yayın kanalı değil.")
-                return
         else:
-            await msg.reply_text("Yayın kanalını özel sohbetten kaydetmek için /kanalkaydet vip @kanaladi veya /kanalkaydet genel @kanaladi yaz.")
+            await msg.reply_text("VIP/genel yayın kanalını botun özel sohbetinden /kanalkaydet vip -100... şeklinde kaydet.")
             return
 
     limit_error = plan_limit_message(tenant_id, 'channels')
@@ -3193,19 +3195,25 @@ async def register_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(limit_error)
         return
 
+    channel_type = "chat" if role == "sohbet" else role
     with connect() as c:
         existing = c.execute('SELECT tenant_id FROM tenant_channels WHERE channel_id=?', (target_chat.id,)).fetchone()
         if existing and existing['tenant_id'] != tenant_id:
-            await msg.reply_text('⛔ Bu kanal başka bir müşteriye kayıtlı. Güvenlik için taşınmadı.'); return
+            await msg.reply_text('⛔ Bu kanal başka bir müşteriye kayıtlı. Güvenlik için taşınmadı.')
+            return
         c.execute("""INSERT INTO tenant_channels(channel_id,tenant_id,channel_name,channel_type,owner_user_id,status)
             VALUES(?,?,?,?,?,'active') ON CONFLICT(channel_id) DO UPDATE SET
             channel_name=excluded.channel_name, channel_type=excluded.channel_type,
             owner_user_id=COALESCE(tenant_channels.owner_user_id,excluded.owner_user_id), status='active'""",
-            (target_chat.id, tenant_id, 'MEDYAECAN SOHBET' if role == 'sohbet' else names[role], 'chat' if role == 'sohbet' else role, user.id))
+            (target_chat.id, tenant_id, names[role], channel_type, user.id))
         c.execute("""INSERT INTO tenant_admins(tenant_id,user_id,role,channel_id,status,added_at)
             VALUES(?,?,'owner',NULL,'active',?) ON CONFLICT(tenant_id,user_id,role,channel_id) DO UPDATE SET status='active'""",
-            (tenant_id,user.id,now().isoformat()))
-    await msg.reply_text(f"✅ {names[role]} kaydedildi.\nTelegram ID: {target_chat.id}\nBotun kanalda yönetici olduğundan emin ol.")
+            (tenant_id, user.id, now().isoformat()))
+
+    await msg.reply_text(
+        f"✅ {names[role]} kaydedildi.\nTelegram ID: {target_chat.id}\n"
+        "Botun hedef grupta/kanalda yönetici olduğundan ve gerekli izinlere sahip olduğundan emin ol."
+    )
 
 
 def make_tenant_id(name, owner_id):
