@@ -215,40 +215,11 @@ def init_db():
             tenant_id TEXT NOT NULL, category TEXT NOT NULL,
             display_name TEXT NOT NULL, url TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1)""")
-        # Varsayılan SITE bağlantıları: yalnızca eksik kayıtları ekle.
-        default_links = [
-            ("site", "MASTERBETTING GİRİŞ", "https://zipt.to/y7BfPx"),
-            ("site", "BİZBET GİRİŞ", "https://bizbet-28601.pro/tr/registration?tag=d_5908901m_62079c_"),
-            ("social", "INSTAGRAM", "https://www.instagram.com/rodrianaliz?evlk=OHN3YjYzaHY5Mmlu"),
-            ("social", "X", "https://x.com/kralrodriguez?s=11"),
-            ("social", "THREADS", "https://www.threads.com/@rodrianaliz?igshid=NTc4MTIwNjQ2YQ=="),
-            ("social", "KICK", "https://kick.com/kralrodriguez"),
-        ]
-        for tenant_key in ("altay_demo", "musteri_001"):
-            for category, label, url in default_links:
-                exists = c.execute(
-                    "SELECT 1 FROM link_items WHERE tenant_id=? AND display_name=? LIMIT 1",
-                    (tenant_key, label)
-                ).fetchone()
-                if not exists:
-                    c.execute(
-                        "INSERT INTO link_items(tenant_id,category,display_name,url,enabled) VALUES(?,?,?,?,1)",
-                        (tenant_key, category, label, url)
-                    )
-
-        # Yalnızca test ortamı otomatik tanımlanır. Müşteri kanalları daha sonra
-        # kullanıcı tarafından verilen gerçek ID'lerle eklenecek.
-        c.execute("""INSERT OR IGNORE INTO tenants
-            (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
-            ("altay_demo", "ALTAY VIP - Deneme", "active", now().isoformat()))
-
+        # Yeni kurulumlarda örnek müşteri veya üçüncü taraf bağlantısı eklenmez.
+        # Var olan tenant/link kayıtlarına dokunulmaz.
+        
         # Legacy test entries are retained for data compatibility but deactivated; real chats are registered with /kanalkaydet.
         c.execute("UPDATE tenant_channels SET status='inactive' WHERE channel_id IN (-5172524860,-1004367177649) AND tenant_id='altay_demo'")
-
-        # Müşteri kayıt alanı hazır; gerçek müşteri kanalları daha sonra eklenecek.
-        c.execute("""INSERT OR IGNORE INTO tenants
-            (tenant_id,tenant_name,status,created_at) VALUES(?,?,?,?)""",
-            ("musteri_001", "Müşteri 001", "active", now().isoformat()))
 
         # Keep the old single-channel setting separately identifiable.
         if CHANNEL_ID:
@@ -305,6 +276,8 @@ PLAN_CATALOG = {
     "professional": {"name": "Profesyonel", "price": 999, "channels": 5, "team": 5},
     "vip": {"name": "VIP", "price": 1999, "channels": 15, "team": 15},
 }
+# 14 günlük deneme, Başlangıç paketinin kaynak limitleriyle sınırlandırılır.
+TRIAL_PLAN = {"name": "Deneme", "price": 0, "channels": 2, "team": 2}
 
 
 def tenant_plan_usage(tenant_id):
@@ -313,14 +286,15 @@ def tenant_plan_usage(tenant_id):
         channels = c.execute("SELECT COUNT(*) FROM tenant_channels WHERE tenant_id=? AND status='active'", (tenant_id,)).fetchone()[0]
         team = c.execute("""SELECT COUNT(DISTINCT user_id) FROM tenant_admins
             WHERE tenant_id=? AND status='active' AND role!='owner'""", (tenant_id,)).fetchone()[0]
-    plan = PLAN_CATALOG.get(row["plan_name"] if row else "", None)
+    plan_name = row["plan_name"] if row else ""
+    plan = TRIAL_PLAN if plan_name == "deneme" else PLAN_CATALOG.get(plan_name)
     return plan, channels, team
 
 
 def plan_limit_message(tenant_id, resource):
     plan, channels, team = tenant_plan_usage(tenant_id)
     if not plan:
-        return None
+        return "⛔ Bu müşteri için geçerli bir paket tanımlı değil. Devam etmek için ana yöneticiyle görüş."
     if resource == "channels" and channels >= plan["channels"]:
         return f"⛔ {plan['name']} paketinde en fazla {plan['channels']} aktif kanal/grup olabilir. Paketi yükseltmek için ana yöneticiyle görüş."
     if resource == "team" and team >= plan["team"]:
