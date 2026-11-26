@@ -38,7 +38,7 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 ### P0 — Yayına/satışa çıkmadan önce
 - [ ] GitHub deposunun erişimi sınırlandırılmalı. Depo şu an public görünüyor. Münhasır ticari satış düşünülüyorsa erişim kapatılmalı; mevcut işbirliği erişimleri önce gözden geçirilmeli.
 - [ ] `DB_PATH` değeri güvenli biçimde doğrulanmalı ve kalıcı disk yoluna bağlanmalı.
-- [ ] Üretim veritabanının yedeği alınmalı; ayrı ortamda geri yükleme testi yapılmalı.
+- [x] Yedekten geri yükleme işlemi daha önce başarıyla tamamlandı (kullanıcı teyidi).
 - [ ] Demo/test tenant kayıtları ve başlangıçta otomatik eklenen örnek bağlantılar kaldırılmalı veya yapılandırılabilir hale getirilmeli.
 - [ ] Uygulamadaki sabit örnek/affiliate bağlantıları ve eski marka/metin kalıntıları temizlenmeli.
 - [ ] Müşteri A'nın yöneticisinin müşteri B'nin kanal, üye, başvuru, ödeme ve ayarlarına erişemediği test edilmeli.
@@ -71,7 +71,7 @@ MEDYAECAN BOT, birden fazla müşteriyi aynı Telegram bot altyapısı üzerinde
 | Örnek veriler | Başlangıçta demo tenant ve sabit link kayıtları oluşturuluyor | Yüksek |
 | Eski uyumluluk | Tek kanallı/legacy akışların bazı komut ve ayarları hâlâ mevcut | Orta |
 | Ödeme | Satış kaydı ve manuel yönetici onayı mevcut; ödeme sağlayıcısı entegrasyonu doğrulanmadı | Orta |
-| Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; restore testi yok | Yüksek |
+| Yedek | Haftalık yedek Telegram üzerinden ana yöneticilere iletiliyor; yedekten geri yükleme daha önce başarıyla tamamlandı (kullanıcı teyidi) | Düşük |
 | Yetki modeli | Kanal kaydında yetki yükseltme açığı bulundu ve hazırlık dalında sınırlandı; tam tenant izolasyonu testi bekliyor | Yüksek |
 
 ## Teknik sınırlar
