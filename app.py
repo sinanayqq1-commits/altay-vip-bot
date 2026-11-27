@@ -623,6 +623,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Eski veya bozuk bir derin bağlantı /start ana menüsünü engellemesin.
             # Başvuru bağlantısı çözümlenemezse normal başlangıç ekranını göster.
             log.exception('VIP derin bağlantısı işlenemedi; normal /start menüsüne dönülüyor')
+    # Hediye deneme müşterisi botu ilk kez açtığında gerçek Telegram kullanıcı adını kaydet.
+    # get_chat(ID) bazı hesaplarda kullanıcı profilini döndürmeyebilir; /start ise güvenilir profili sağlar.
+    if chat and chat.type == "private" and user.username:
+        with connect() as c:
+            c.execute(
+                """UPDATE tenants SET owner_username=?,
+                   tenant_name=CASE WHEN tenant_id LIKE 'hediye_%'
+                       THEN 'MEDYAECAN Deneme (@' || ? || ')' ELSE tenant_name END
+                   WHERE tenant_id IN (
+                       SELECT tenant_id FROM tenant_admins
+                       WHERE user_id=? AND role='owner' AND channel_id IS NULL AND status='active'
+                   ) AND tenant_id LIKE 'hediye_%'""",
+                (user.username, user.username, user.id)
+            )
+
     # Kullanıcı tipine göre birbirinden tamamen ayrı başlangıç menüleri.
     persistent_menu = ReplyKeyboardMarkup(
         [[KeyboardButton("🧡 MEDYAECAN / ANA MENÜ")]],
@@ -1551,7 +1566,9 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         last_name = (profile.get("last_name") or "").strip()
         username = (profile.get("username") or "").strip()
         display_name = " ".join(x for x in (first_name, last_name) if x).strip()
-        tenant_name = f"MEDYAECAN Deneme — {display_name}" if display_name else f"MEDYAECAN Deneme {target_id}"
+        tenant_name = (f"MEDYAECAN Deneme (@{username})" if username
+                       else (f"MEDYAECAN Deneme — {display_name}" if display_name
+                             else f"MEDYAECAN Deneme {target_id}"))
         with connect() as c:
             exists = c.execute("SELECT 1 FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
             if exists:
@@ -1830,7 +1847,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                         uname = (getattr(profile, "username", None) or "").strip()
                         full = " ".join(x for x in (first, last) if x).strip()
                         if full or uname:
-                            shown = f"MEDYAECAN Deneme — {full}" if full else tenant["tenant_name"]
+                            shown = (f"MEDYAECAN Deneme (@{uname})" if uname
+                                     else (f"MEDYAECAN Deneme — {full}" if full else tenant["tenant_name"]))
                             c.execute("UPDATE tenants SET tenant_name=?,owner_first_name=?,owner_last_name=?,owner_username=? WHERE tenant_id=?",
                                       (shown, first, last, uname, tenant["tenant_id"]))
                             tenant = dict(tenant)
