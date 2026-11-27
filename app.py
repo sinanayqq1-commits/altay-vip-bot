@@ -170,6 +170,11 @@ def init_db():
             if column not in tenant_columns:
                 c.execute(f"ALTER TABLE tenants ADD COLUMN {column} TEXT")
 
+        # Mevcut hediye deneme kaydına yönetici tarafından doğrulanan Telegram kullanıcı adını ekle.
+        c.execute("""UPDATE tenants SET owner_username='Henryrodrii',
+            tenant_name='MEDYAECAN Deneme (@Henryrodrii)'
+            WHERE tenant_id='hediye_8914478422'""")
+
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_channels(
             channel_id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL,
             channel_name TEXT NOT NULL, channel_type TEXT NOT NULL,
