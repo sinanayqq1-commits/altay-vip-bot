@@ -166,6 +166,9 @@ def init_db():
             c.execute("ALTER TABLE tenants ADD COLUMN license_status TEXT NOT NULL DEFAULT 'active'")
         if "license_expires_at" not in tenant_columns:
             c.execute("ALTER TABLE tenants ADD COLUMN license_expires_at TEXT")
+        for column in ("owner_first_name", "owner_last_name", "owner_username"):
+            if column not in tenant_columns:
+                c.execute(f"ALTER TABLE tenants ADD COLUMN {column} TEXT")
 
         c.execute("""CREATE TABLE IF NOT EXISTS tenant_channels(
             channel_id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL,
@@ -846,6 +849,20 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
     target_id = int(raw)
     context.user_data["awaiting_gift_trial_user_id"] = False
     context.user_data["gift_trial_target_user_id"] = target_id
+    try:
+        profile = await context.bot.get_chat(target_id)
+        first_name = (getattr(profile, "first_name", None) or "").strip()
+        last_name = (getattr(profile, "last_name", None) or "").strip()
+        username = (getattr(profile, "username", None) or "").strip()
+        display_name = " ".join(x for x in (first_name, last_name) if x).strip()
+        context.user_data["gift_trial_profile"] = {
+            "first_name": first_name, "last_name": last_name,
+            "username": username, "display_name": display_name
+        }
+    except Exception:
+        context.user_data["gift_trial_profile"] = {}
+        display_name = ""
+        username = ""
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("7 gün", callback_data="tenantpanel:gift_days:7"),
          InlineKeyboardButton("15 gün", callback_data="tenantpanel:gift_days:15"),
@@ -853,7 +870,9 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton("❌ İptal", callback_data="tenantpanel:home")]
     ])
     await update.effective_message.reply_text(
-        f"🎁 Telegram ID: {target_id}\nHediye deneme süresini seç:",
+        f"🎁 Kişi: {display_name or 'Telegram adı alınamadı'}\n"
+        f"Kullanıcı adı: @{username or 'yok'}\nTelegram ID: {target_id}\n"
+        "Hediye deneme süresini seç:",
         reply_markup=kb
     )
 
@@ -1527,21 +1546,28 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             return
         tenant_id = f"hediye_{target_id}"
         expires = now() + timedelta(days=days)
-        tenant_name = f"MEDYAECAN Deneme {target_id}"
+        profile = context.user_data.get("gift_trial_profile", {})
+        first_name = (profile.get("first_name") or "").strip()
+        last_name = (profile.get("last_name") or "").strip()
+        username = (profile.get("username") or "").strip()
+        display_name = " ".join(x for x in (first_name, last_name) if x).strip()
+        tenant_name = f"MEDYAECAN Deneme — {display_name}" if display_name else f"MEDYAECAN Deneme {target_id}"
         with connect() as c:
             exists = c.execute("SELECT 1 FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
             if exists:
                 c.execute(
-                    """UPDATE tenants SET tenant_name=?,status='active',plan_name='hediye_deneme',
-                       license_status='active',license_expires_at=? WHERE tenant_id=?""",
-                    (tenant_name, expires.isoformat(), tenant_id)
+                    """UPDATE tenants SET tenant_name=?,owner_first_name=?,owner_last_name=?,owner_username=?,
+                       status='active',plan_name='hediye_deneme',license_status='active',license_expires_at=?
+                       WHERE tenant_id=?""",
+                    (tenant_name, first_name, last_name, username, expires.isoformat(), tenant_id)
                 )
             else:
                 c.execute(
                     """INSERT INTO tenants
-                       (tenant_id,tenant_name,status,created_at,plan_name,license_status,license_expires_at)
-                       VALUES(?,?, 'active', ?, 'hediye_deneme', 'active', ?)""",
-                    (tenant_id, tenant_name, now().isoformat(), expires.isoformat())
+                       (tenant_id,tenant_name,status,created_at,plan_name,license_status,license_expires_at,
+                        owner_first_name,owner_last_name,owner_username)
+                       VALUES(?,?, 'active', ?, 'hediye_deneme', 'active', ?,?,?,?)""",
+                    (tenant_id, tenant_name, now().isoformat(), expires.isoformat(), first_name, last_name, username)
                 )
             owner_row = c.execute(
                 """SELECT 1 FROM tenant_admins
@@ -1564,8 +1590,10 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         log_admin_action(uid, "Hediye deneme üyeliği tanımlandı", target_id,
                          f"tenant={tenant_id}; gün={days}; bitiş={expires.isoformat()}")
         context.user_data.pop("gift_trial_target_user_id", None)
+        context.user_data.pop("gift_trial_profile", None)
         await q.edit_message_text(
-            f"✅ HEDİYE DENEME TANIMLANDI\n\nTelegram ID: {target_id}\n"
+            f"✅ HEDİYE DENEME TANIMLANDI\n\nKişi: {display_name or 'Telegram adı alınamadı'}\n"
+            f"Kullanıcı adı: @{username or 'yok'}\nTelegram ID: {target_id}\n"
             f"Süre: {days} gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
             "Kullanıcı @medya-e-can_bot botuna /start gönderdiğinde kendi müşteri yönetim paneli açılacak."
         )
@@ -1779,7 +1807,8 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                         WHERE owner_user_id=? AND tenant_id='legacy_single'""",
                         (q.from_user.username, uid))
                 tenants = c.execute(
-                    "SELECT tenant_id,tenant_name,status FROM tenants WHERE status='active' ORDER BY tenant_name"
+                    "SELECT tenant_id,tenant_name,status,owner_first_name,owner_last_name,owner_username "
+                    "FROM tenants WHERE status='active' ORDER BY tenant_name"
                 ).fetchall()
                 channels = c.execute("""
                     SELECT t.tenant_name, ch.channel_name, ch.channel_id,
@@ -1789,9 +1818,36 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
                     WHERE t.status='active' AND ch.status='active'
                     ORDER BY t.tenant_name, ch.channel_name
                 """).fetchall()
+            # Eski hediye deneme kayıtlarında Telegram profilini bulabiliyorsak bilgileri tamamla.
+            refreshed = []
+            for tenant in tenants:
+                if tenant["tenant_id"].startswith("hediye_") and not (tenant["owner_first_name"] or tenant["owner_username"]):
+                    try:
+                        target_id = int(tenant["tenant_id"].split("_", 1)[1])
+                        profile = await context.bot.get_chat(target_id)
+                        first = (getattr(profile, "first_name", None) or "").strip()
+                        last = (getattr(profile, "last_name", None) or "").strip()
+                        uname = (getattr(profile, "username", None) or "").strip()
+                        full = " ".join(x for x in (first, last) if x).strip()
+                        if full or uname:
+                            shown = f"MEDYAECAN Deneme — {full}" if full else tenant["tenant_name"]
+                            c.execute("UPDATE tenants SET tenant_name=?,owner_first_name=?,owner_last_name=?,owner_username=? WHERE tenant_id=?",
+                                      (shown, first, last, uname, tenant["tenant_id"]))
+                            tenant = dict(tenant)
+                            tenant.update({"tenant_name": shown, "owner_first_name": first,
+                                           "owner_last_name": last, "owner_username": uname})
+                    except Exception:
+                        pass
+                refreshed.append(tenant)
+            tenants = refreshed
             lines = ["🏢 MÜŞTERİLER", "Satış oluşturmak için müşteriyi seç:"]
             tenant_buttons = [[InlineKeyboardButton(f"🧾 {t['tenant_name']} — Satış oluştur", callback_data=f"tenantpanel:salechoose:{t['tenant_id']}")] for t in tenants]
-            lines += [f"• {t['tenant_name']} ({t['tenant_id']}) — {t['status']}" for t in tenants]
+            lines += [
+                f"• {t['tenant_name']}" +
+                (f" (@{t['owner_username']})" if t['owner_username'] else "") +
+                (f" — ID: {t['tenant_id'].split('_',1)[1]}" if t['tenant_id'].startswith("hediye_") else f" ({t['tenant_id']})") +
+                f" — {t['status']}" for t in tenants
+            ]
             lines += ["", "📡 KANALLAR"]
             lines += [
                 f"• {r['tenant_name']} / {r['channel_name']}\n"
