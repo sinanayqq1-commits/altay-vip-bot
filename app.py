@@ -868,10 +868,48 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
     if not admin(uid) or not context.user_data.get("awaiting_gift_trial_user_id"):
         return
     raw = (update.effective_message.text or "").strip()
-    if not raw.isdigit() or int(raw) <= 0:
-        await update.effective_message.reply_text("Geçerli bir Telegram kullanıcı ID gönder. Örnek: 8914478422")
+    username_input = raw.lstrip("@").strip()
+    if raw.isdigit() and int(raw) > 0:
+        target_id = int(raw)
+    elif username_input and all(ch.isalnum() or ch === "_" for ch in username_input):
+        # Telegram bot API cannot look up arbitrary usernames. Resolve only users
+        # already known to this bot from its own tenant/member records.
+        with connect() as c:
+            matches = c.execute("""
+                SELECT DISTINCT user_id FROM (
+                    SELECT user_id FROM tenant_admins
+                    WHERE status='active' AND lower(replace(coalesce((SELECT owner_username
+                        FROM tenants WHERE tenants.tenant_id=tenant_admins.tenant_id),''),'@',''))=lower(?)
+                    UNION
+                    SELECT user_id FROM tenant_memberships
+                    WHERE lower(replace(coalesce(username,''),'@',''))=lower(?)
+                    UNION
+                    SELECT user_id FROM tenant_applications
+                    WHERE lower(replace(coalesce(username,''),'@',''))=lower(?)
+                    UNION
+                    SELECT user_id FROM memberships
+                    WHERE lower(replace(coalesce(username,''),'@',''))=lower(?)
+                    UNION
+                    SELECT user_id FROM applications
+                    WHERE lower(replace(coalesce(username,''),'@',''))=lower(?)
+                )
+            """, (username_input, username_input, username_input, username_input, username_input)).fetchall()
+        if len(matches) == 0:
+            await update.effective_message.reply_text(
+                "Bu kullanıcı adı botun kayıtlarında bulunamadı. Telegram ID gönderebilir veya kişinin önce @medyaecan_bot üzerinden /start yapmasını isteyebilirsin."
+            )
+            return
+        if len(matches) > 1:
+            await update.effective_message.reply_text(
+                "Bu kullanıcı adı birden fazla eski kayıtta bulundu. Yanlış kişiye deneme vermemek için Telegram ID gönder."
+            )
+            return
+        target_id = int(matches[0]["user_id"])
+    else:
+        await update.effective_message.reply_text(
+            "Telegram kullanıcı adı (@kullaniciadi) veya sayısal Telegram ID gönder."
+        )
         return
-    target_id = int(raw)
     context.user_data["awaiting_gift_trial_user_id"] = False
     context.user_data["gift_trial_target_user_id"] = target_id
     try:
@@ -1789,7 +1827,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["awaiting_gift_trial_user_id"] = True
         await q.message.reply_text(
             "🎁 HEDİYE DENEME ÜYELİĞİ\n\n"
-            "Deneme erişimi tanımlanacak kişinin Telegram kullanıcı ID numarasını gönder:"
+            "Kişinin Telegram kullanıcı adını (@kullaniciadi) veya Telegram ID numarasını gönder:"
         )
         return
     elif q.data.startswith("tenantpanel:gift_days:"):
@@ -1854,7 +1892,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ HEDİYE DENEME TANIMLANDI\n\nKişi: {display_name or 'Telegram adı alınamadı'}\n"
             f"Kullanıcı adı: @{username or 'yok'}\nTelegram ID: {target_id}\n"
             f"Süre: {days} gün\nBitiş: {expires:%d.%m.%Y %H:%M}\n\n"
-            "Kullanıcı @medya-e-can_bot botuna /start gönderdiğinde kendi müşteri yönetim paneli açılacak."
+            "Kullanıcı @medyaecan_bot botuna /start gönderdiğinde kendi müşteri yönetim paneli açılacak."
         )
         try:
             await context.bot.send_message(
