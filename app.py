@@ -972,7 +972,7 @@ async def build_finance_overview():
     if not expiring:
         lines.append("• Yaklaşan lisans bitişi yok.")
     lines += ["", "Not: Yazılım lisans tahsilatları ve VIP üye ödemeleri ayrı hesaplanır; toplamları yalnızca bir kez genel toplama eklenir."]
-    return "\\n".join(lines)[:3900]
+    return "\n".join(lines)[:3900]
 
 
 async def build_live_admin_overview():
