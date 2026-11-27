@@ -871,7 +871,7 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
     username_input = raw.lstrip("@").strip()
     if raw.isdigit() and int(raw) > 0:
         target_id = int(raw)
-    elif username_input and all(ch.isalnum() or ch === "_" for ch in username_input):
+    elif username_input and all(ch.isalnum() or ch == "_" for ch in username_input):
         # Telegram bot API cannot look up arbitrary usernames. Resolve only users
         # already known to this bot from its own tenant/member records.
         with connect() as c:
