@@ -309,9 +309,9 @@ async def cleanup_vip_invite_message(context, user_id, chat_id):
 
 
 PLAN_CATALOG = {
-    "starter": {"name": "Başlangıç", "price": 599, "channels": 2, "team": 2},
-    "professional": {"name": "Profesyonel", "price": 1199, "channels": 5, "team": 5},
-    "vip": {"name": "VIP", "price": 2199, "channels": 15, "team": 15},
+    "starter": {"name": "Başlangıç", "price": 1500, "channels": 2, "team": 2},
+    "professional": {"name": "Profesyonel", "price": 2500, "channels": 4, "team": 5},
+    "vip": {"name": "Sınırsız", "price": 5000, "channels": None, "team": 15},
 }
 
 
@@ -374,7 +374,7 @@ def plan_limit_message(tenant_id, resource):
     plan, channels, team = tenant_plan_usage(tenant_id)
     if not plan:
         return None
-    if resource == "channels" and channels >= plan["channels"]:
+    if resource == "channels" and plan["channels"] is not None and channels >= plan["channels"]:
         return f"⛔ {plan['name']} paketinde en fazla {plan['channels']} aktif kanal/grup olabilir. Paketi yükseltmek için ana yöneticiyle görüş."
     if resource == "team" and team >= plan["team"]:
         return f"⛔ {plan['name']} paketinde en fazla {plan['team']} ekip kullanıcısı olabilir. Paketi yükseltmek için ana yöneticiyle görüş."
@@ -501,7 +501,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📦 SATIŞ PAKETLERİMİZ\n\n"
                 + "\n".join(
                     f"• {PLAN_CATALOG[k]['name']} — {PLAN_CATALOG[k]['price']:,} TL/ay\n"
-                    f"  {PLAN_CATALOG[k]['channels']} kanal/grup • {PLAN_CATALOG[k]['team']} ekip kullanıcısı"
+                    f"  {('Sınırsız' if PLAN_CATALOG[k]['channels'] is None else PLAN_CATALOG[k]['channels'])} kanal/grup • {PLAN_CATALOG[k]['team']} ekip kullanıcısı"
                     for k in ("starter", "professional", "vip")
                 )
                 + "\n\nDetaylı bilgi ve satın alma için aşağıdaki butona dokun.\n"
@@ -560,7 +560,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             package = PLAN_CATALOG[package_key]
             package_lines.append(
                 f"📦 {package['name']} — {package['price']:,} TL / ay\n"
-                f"   • {package['channels']} kanal / grup\n"
+                f"   • {('Sınırsız' if package['channels'] is None else package['channels'])} kanal / grup\n"
                 f"   • {package['team']} ekip kullanıcısı"
             )
         sales_kb = InlineKeyboardMarkup([[
@@ -683,7 +683,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 package = PLAN_CATALOG[package_key]
                 package_lines.append(
                     f"• {package['name']} — {package['price']:,} TL/ay\n"
-                    f"  {package['channels']} kanal/grup • {package['team']} ekip kullanıcısı"
+                    f"  {('Sınırsız' if package['channels'] is None else package['channels'])} kanal/grup • {package['team']} ekip kullanıcısı"
                 )
             msg = (
                 f"🧡 MEDYAECAN'a hoş geldin, {user.first_name}!\n\n"
@@ -3579,7 +3579,7 @@ async def package_list_command(update: Update, context: ContextTypes.DEFAULT_TYP
     lines = ["📦 SATIŞ PAKETLERİ", ""]
     for key, p in PLAN_CATALOG.items():
         lines.append(f"• {p['name']} ({key}) — {p['price']:,} TL/ay")
-        lines.append(f"  {p['channels']} kanal/grup • {p['team']} ekip kullanıcısı")
+        lines.append(f"  {('Sınırsız' if p['channels'] is None else p['channels'])} kanal/grup • {p['team']} ekip kullanıcısı")
     lines += ["", "Paket atama: /paketver MUSTERI_KODU starter|professional|vip GUN"]
     await update.effective_message.reply_text("\n".join(lines))
 
@@ -3714,7 +3714,7 @@ async def assign_package_command(update: Update, context: ContextTypes.DEFAULT_T
                      f"{tenant_id}; {package}; {days} gün")
     await update.effective_message.reply_text(
         f"✅ PAKET ATANDI\nMüşteri: {tenant['tenant_name']}\nPaket: {p['name']} — {p['price']:,} TL/ay"
-        f"\nLimit: {p['channels']} kanal/grup, {p['team']} ekip kullanıcısı\nLisans bitişi: {expires:%d.%m.%Y %H:%M}"
+        f"\nLimit: {('Sınırsız' if p['channels'] is None else p['channels'])} kanal/grup, {p['team']} ekip kullanıcısı\nLisans bitişi: {expires:%d.%m.%Y %H:%M}"
     )
 
 
