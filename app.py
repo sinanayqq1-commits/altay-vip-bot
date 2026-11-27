@@ -444,6 +444,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
         [InlineKeyboardButton("💰 Mali durum / Tahsilat", callback_data="tenantpanel:finance")],
+        [InlineKeyboardButton("📦 Satış Paketleri", callback_data="tenantpanel:packages")],
         [InlineKeyboardButton("🏦 MEDYA E-CAN IBAN ayarları", callback_data="tenantpanel:companyiban")],
         [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
         [InlineKeyboardButton("🧾 Yönetici işlem geçmişi", callback_data="tenantpanel:audit")],
@@ -1735,6 +1736,20 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
+
+    if q.data == "tenantpanel:packages":
+        lines = ["📦 MEDYAECAN SATIŞ PAKETLERİ", ""]
+        for key in ("starter", "professional", "vip"):
+            package = PLAN_CATALOG[key]
+            channels = "Sınırsız" if package["channels"] is None else str(package["channels"])
+            lines.append(f"• {package['name']} — {package['price']:,} TL / ay")
+            lines.append(f"  {channels} kanal • {package['team']} ekip kullanıcısı")
+            lines.append("")
+        lines.append("Paket atamak için /paketver MUSTERI_KODU starter|professional|vip GUN")
+        await q.edit_message_text("\\n".join(lines), reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]
+        ]))
+        return
 
     if q.data == "tenantpanel:finance":
         body = await build_finance_overview()
@@ -3244,10 +3259,28 @@ async def send_golden_group_promo(context: ContextTypes.DEFAULT_TYPE):
             )]])
             photo_id = settings.get("promo_photo_file_id")
             if photo_id:
-                sent_message = await context.bot.send_photo(chat_id=group_id, photo=photo_id,
-                                              caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb)
+                try:
+                    sent_message = await context.bot.send_photo(
+                        chat_id=group_id, photo=photo_id,
+                        caption=promo_text[:1024], parse_mode="HTML", reply_markup=kb
+                    )
+                except BadRequest as photo_error:
+                    if "file identifier" not in str(photo_error).lower() and "wrong file" not in str(photo_error).lower():
+                        raise
+                    log.warning("Tanıtım fotoğrafı geçersiz; metin paylaşımına geçiliyor: tenant=%s group=%s", tenant_id, group_id)
+                    with connect() as c:
+                        c.execute("""UPDATE tenant_settings SET setting_value='',updated_at=?
+                            WHERE tenant_id=? AND setting_key='promo_photo_file_id'""",
+                            (current.isoformat(), tenant_id))
+                    sent_message = await context.bot.send_message(
+                        chat_id=group_id, text=promo_text[:4000],
+                        parse_mode="HTML", reply_markup=kb
+                    )
             else:
-                sent_message = await context.bot.send_message(chat_id=group_id, text=promo_text[:4000], parse_mode="HTML", reply_markup=kb)
+                sent_message = await context.bot.send_message(
+                    chat_id=group_id, text=promo_text[:4000],
+                    parse_mode="HTML", reply_markup=kb
+                )
             # Yeni MEDYAECAN tanıtımını sabitle; eski VIP tanıtımını yalnızca sabitten kaldır.
             try:
                 chat_info = await context.bot.get_chat(group_id)
