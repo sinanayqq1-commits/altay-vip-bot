@@ -852,7 +852,22 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not tid:
             await update.message.reply_text('Birden fazla müşteride yetkin var. /musterisec MUSTERI_ID kullan.')
             return
-        await update.message.reply_text('🏢 MÜŞTERİ YÖNETİM PANELİ\n\nYalnızca yetkili olduğun müşterinin kayıtlarını yönetebilirsin.', reply_markup=tenant_panel_keyboard())
+        await update.message.reply_text(
+            '🏢 MEDYAECAN MÜŞTERİ YÖNETİM PANELİ\n\n'
+            'Hoş geldin! Kanalını henüz bağlamamış olsan bile aşağıdaki bölümleri inceleyebilirsin. '
+            'Boş bölümlerde örnek müşteri verisi gösterilmez; kendi kayıtların oluştuğunda burada görünür.\n\n'
+            '👥 Üyelerim: VIP üyelerini ve üyelik bitişlerini takip et.\n'
+            '⏳ Başvurularım: Gelen VIP katılım başvurularını incele.\n'
+            '📡 Kanallarım: Kanalını bağla ve kayıtlı kanallarını görüntüle.\n'
+            '💳 Ödemelerim: Üyelik tahsilatlarını takip et.\n'
+            '🏆 Kanal sıralaması: Kanallarının canlı üye sayılarını gör.\n'
+            '📣 Otomatik duyurular: Günlük duyurularını planla.\n'
+            '🏦 IBAN bilgilerim: Kendi ödeme bilgilerini kaydet.\n'
+            '🎨 Marka ve görünüm: İşletme adını ve karşılama mesajını düzenle.\n'
+            '🔐 Yetkilerim / 🛡 Ekip: Rol ve ekip erişimlerini yönet.\n\n'
+            'Başlamak için 📡 Kanallarım bölümünü açıp kanalını ekle.',
+            reply_markup=tenant_panel_keyboard()
+        )
         return
     await update.message.reply_text(
         "🛠 MEDYAECAN — YÖNETİCİ PANELİ\n\n"
