@@ -3845,17 +3845,69 @@ async def list_tenants_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def select_tenant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if len(context.args) == 0:
+        if admin(uid):
+            with connect() as c:
+                rows = c.execute("SELECT tenant_id,tenant_name FROM tenants WHERE status='active' ORDER BY tenant_name").fetchall()
+        else:
+            rows = tenant_permissions(uid)
+        unique = {}
+        for row in rows:
+            unique[str(row["tenant_id"])] = str(row["tenant_name"])
+        if not unique:
+            await update.effective_message.reply_text("Erişebildiğin aktif müşteri bulunamadı.")
+            return
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(name, callback_data=f"tenantselect:{tid}")]
+            for tid, name in unique.items()
+        ])
+        await update.effective_message.reply_text("🏢 PANELİNİ AÇMAK İSTEDİĞİN MÜŞTERİYİ SEÇ:", reply_markup=keyboard)
+        return
     if len(context.args) != 1:
-        await update.effective_message.reply_text('Kullanım: /musterisec MUSTERI_KODU'); return
+        await update.effective_message.reply_text('Kullanım: /musterisec')
+        return
     tid = context.args[0].strip()
     if not admin(uid) and tid not in tenant_ids_for_user(uid):
-        await update.effective_message.reply_text('Bu müşteriye erişim yetkin yok.'); return
+        await update.effective_message.reply_text('Bu müşteriye erişim yetkin yok.')
+        return
     with connect() as c:
-        row = c.execute('SELECT tenant_name FROM tenants WHERE tenant_id=? AND status=\'active\'', (tid,)).fetchone()
+        row = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=? AND status='active'", (tid,)).fetchone()
     if not row:
-        await update.effective_message.reply_text('Aktif müşteri bulunamadı.'); return
+        await update.effective_message.reply_text('Aktif müşteri bulunamadı.')
+        return
     context.user_data['selected_tenant_id'] = tid
     await update.effective_message.reply_text(f"✅ Seçili müşteri: {row['tenant_name']} ({tid})")
+
+async def tenant_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = q.from_user.id
+    tid = q.data.split(":", 1)[1]
+    if not admin(uid) and tid not in tenant_ids_for_user(uid):
+        await q.answer("Bu müşteriye erişim yetkin yok.", show_alert=True)
+        return
+    with connect() as c:
+        row = c.execute("SELECT tenant_name FROM tenants WHERE tenant_id=? AND status='active'", (tid,)).fetchone()
+    if not row:
+        await q.answer("Aktif müşteri bulunamadı.", show_alert=True)
+        return
+    context.user_data["selected_tenant_id"] = tid
+    await q.answer("Müşteri seçildi.")
+    await q.message.reply_text(
+        "🏢 MEDYAECAN MÜŞTERİ YÖNETİM PANELİ\\n\\n"
+        "Hoş geldin! Kanalını henüz bağlamamış olsan bile aşağıdaki bölümleri inceleyebilirsin. "
+        "Boş bölümlerde örnek müşteri verisi gösterilmez; kendi kayıtların oluştuğunda burada görünür.\\n\\n"
+        "👥 Üyelerim: VIP üyelerini ve üyelik bitişlerini takip et.\\n"
+        "⏳ Başvurularım: Gelen VIP katılım başvurularını incele.\\n"
+        "📡 Kanallarım: Kanalını bağla ve kayıtlı kanallarını görüntüle.\\n"
+        "💳 Ödemelerim: Üyelik tahsilatlarını takip et.\\n"
+        "🏆 Kanal sıralaması: Kanallarının canlı üye sayılarını gör.\\n"
+        "📣 Otomatik duyurular: Günlük duyurularını planla.\\n"
+        "🏦 IBAN bilgilerim: Kendi ödeme bilgilerini kaydet.\\n"
+        "🎨 Marka ve görünüm: İşletme adını ve karşılama mesajını düzenle.\\n"
+        "🔐 Yetkilerim / 🛡 Ekip: Rol ve ekip erişimlerini yönet.\\n\\n"
+        "Başlamak için 📡 Kanallarım bölümünü açıp kanalını ekle.",
+        reply_markup=tenant_panel_keyboard()
+    )
 
 
 def tenant_for_channel(cid):
@@ -4880,6 +4932,7 @@ def main():
     app.add_handler(CommandHandler("karsilama", set_welcome_message))
     app.add_handler(CommandHandler("uyegecmis", user_history_command))
     app.add_handler(CallbackQueryHandler(home_callbacks, pattern=r"^home:"))
+    app.add_handler(CallbackQueryHandler(tenant_select_callback, pattern=r"^tenantselect:"))
     app.add_handler(CallbackQueryHandler(team_role_callback, pattern=r"^teamrole:"))
     app.add_handler(CallbackQueryHandler(tenant_panel_callbacks, pattern=r"^tenantpanel:"))
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r"^(approve|reject):"))
