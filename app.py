@@ -1832,7 +1832,7 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
             lines.append(f"  {channels} kanal • {package['team']} ekip kullanıcısı")
             lines.append("")
         lines.append("Paket atamak için /paketver MUSTERI_KODU starter|professional|vip GUN")
-        await q.edit_message_text("\\n".join(lines), reply_markup=InlineKeyboardMarkup([
+        await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]
         ]))
         return
