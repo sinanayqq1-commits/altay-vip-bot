@@ -437,6 +437,7 @@ def admin_panel_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 VIP üyeler", callback_data="tenantpanel:members"),
          InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
+        [InlineKeyboardButton("📊 Canlı genel bakış", callback_data="tenantpanel:overview")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
         [InlineKeyboardButton("🏆 En çok üyeli kanallar (Genel)", callback_data="tenantpanel:channelrank")],
         [InlineKeyboardButton("🛡 Müşteri ekiplerini yönet", callback_data="tenantpanel:adminteams")],
@@ -896,6 +897,89 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
         f"Kullanıcı adı: @{username or 'yok'}\nTelegram ID: {target_id}\n"
         "Hediye deneme süresini seç:",
         reply_markup=kb
+    )
+
+
+async def build_live_admin_overview():
+    """Build a current cross-tenant snapshot for the MEDYAECAN master admin."""
+    current = now()
+    current_iso = current.isoformat()
+    day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week_ahead = (current + timedelta(days=7)).isoformat()
+    with connect() as conn:
+        customers = conn.execute("""
+            SELECT COUNT(*) FROM tenants
+            WHERE status='active' AND tenant_id NOT IN ('altay_demo','musteri_001')
+              AND license_status='active'
+              AND (license_expires_at IS NULL OR license_expires_at>?)
+        """, (current_iso,)).fetchone()[0]
+        new_customers = conn.execute("""
+            SELECT COUNT(*) FROM tenants
+            WHERE status='active' AND tenant_id NOT IN ('altay_demo','musteri_001')
+              AND created_at>=?
+        """, (month_start,)).fetchone()[0]
+        channels = conn.execute(
+            "SELECT COUNT(*) FROM tenant_channels WHERE status='active'"
+        ).fetchone()[0]
+        tenant_vips = conn.execute("""
+            SELECT COUNT(*) FROM tenant_memberships
+            WHERE status='active' AND expires_at>?
+        """, (current_iso,)).fetchone()[0]
+        legacy_vips = conn.execute("""
+            SELECT COUNT(*) FROM memberships
+            WHERE status='active' AND expires_at>?
+        """, (current_iso,)).fetchone()[0]
+        tenant_pending = conn.execute(
+            "SELECT COUNT(*) FROM tenant_applications WHERE status='pending'"
+        ).fetchone()[0]
+        legacy_pending = conn.execute(
+            "SELECT COUNT(*) FROM applications WHERE status='pending'"
+        ).fetchone()[0]
+        expiring = conn.execute("""
+            SELECT COUNT(*) FROM tenants
+            WHERE status='active' AND license_status='active'
+              AND license_expires_at>? AND license_expires_at<=?
+        """, (current_iso, week_ahead)).fetchone()[0]
+        sales_today = conn.execute("""
+            SELECT COUNT(*),COALESCE(SUM(amount),0) FROM tenant_sales
+            WHERE status='paid' AND paid_at>=?
+        """, (day_start,)).fetchone()
+        sales_month = conn.execute("""
+            SELECT COUNT(*),COALESCE(SUM(amount),0) FROM tenant_sales
+            WHERE status='paid' AND paid_at>=?
+        """, (month_start,)).fetchone()
+        vip_today = conn.execute("""
+            SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments
+            WHERE paid_at>=?
+        """, (day_start,)).fetchone()
+        vip_month = conn.execute("""
+            SELECT COUNT(*),COALESCE(SUM(amount),0) FROM membership_payments
+            WHERE paid_at>=?
+        """, (month_start,)).fetchone()
+        pending_sales = conn.execute(
+            "SELECT COUNT(*) FROM tenant_sales WHERE status='pending'"
+        ).fetchone()[0]
+
+    today_total = float(sales_today[1] or 0) + float(vip_today[1] or 0)
+    month_total = float(sales_month[1] or 0) + float(vip_month[1] or 0)
+    today_count = int(sales_today[0] or 0) + int(vip_today[0] or 0)
+    month_count = int(sales_month[0] or 0) + int(vip_month[0] or 0)
+    return (
+        "📊 MEDYAECAN | CANLI GENEL BAKIŞ\\n"
+        f"🕒 Güncelleme: {current:%d.%m.%Y %H:%M} (Türkiye)\\n\\n"
+        "🏢 MÜŞTERİ VE SİSTEM\\n"
+        f"• Aktif müşteri: {customers}\\n"
+        f"• Bu ay açılan müşteri: {new_customers}\\n"
+        f"• Aktif kanal/grup: {channels}\\n"
+        f"• Aktif VIP üye: {tenant_vips + legacy_vips}\\n"
+        f"• Bekleyen VIP başvurusu: {tenant_pending + legacy_pending}\\n"
+        f"• 7 gün içinde lisansı bitecek: {expiring}\\n\\n"
+        "💰 TAHSİLAT\\n"
+        f"• Bugün: {today_total:,.2f} TL ({today_count} ödeme)\\n"
+        f"• Bu ay: {month_total:,.2f} TL ({month_count} ödeme)\\n"
+        f"• Bekleyen müşteri ödemesi: {pending_sales}\\n\\n"
+        "Bilgiler veritabanından yenilendi. Kanal üye sayılarının canlı sıralaması ayrı menüdedir."
     )
 
 
@@ -1576,6 +1660,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
+
+    if q.data == "tenantpanel:overview":
+        body = await build_live_admin_overview()
+        await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Yenile", callback_data="tenantpanel:overview")], [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]]))
+        return
 
     if q.data == "tenantpanel:channelrank":
         body = await build_channel_rank_text(context.bot)
