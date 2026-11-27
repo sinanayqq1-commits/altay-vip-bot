@@ -966,19 +966,19 @@ async def build_live_admin_overview():
     today_count = int(sales_today[0] or 0) + int(vip_today[0] or 0)
     month_count = int(sales_month[0] or 0) + int(vip_month[0] or 0)
     return (
-        "📊 MEDYAECAN | CANLI GENEL BAKIŞ\\n"
-        f"🕒 Güncelleme: {current:%d.%m.%Y %H:%M} (Türkiye)\\n\\n"
-        "🏢 MÜŞTERİ VE SİSTEM\\n"
-        f"• Aktif müşteri: {customers}\\n"
-        f"• Bu ay açılan müşteri: {new_customers}\\n"
-        f"• Aktif kanal/grup: {channels}\\n"
-        f"• Aktif VIP üye: {tenant_vips + legacy_vips}\\n"
-        f"• Bekleyen VIP başvurusu: {tenant_pending + legacy_pending}\\n"
-        f"• 7 gün içinde lisansı bitecek: {expiring}\\n\\n"
-        "💰 TAHSİLAT\\n"
-        f"• Bugün: {today_total:,.2f} TL ({today_count} ödeme)\\n"
-        f"• Bu ay: {month_total:,.2f} TL ({month_count} ödeme)\\n"
-        f"• Bekleyen müşteri ödemesi: {pending_sales}\\n\\n"
+        "📊 MEDYAECAN | CANLI GENEL BAKIŞ\n"
+        f"🕒 Güncelleme: {current:%d.%m.%Y %H:%M} (Türkiye)\n\n"
+        "🏢 MÜŞTERİ VE SİSTEM\n"
+        f"• Aktif müşteri: {customers}\n"
+        f"• Bu ay açılan müşteri: {new_customers}\n"
+        f"• Aktif kanal/grup: {channels}\n"
+        f"• Aktif VIP üye: {tenant_vips + legacy_vips}\n"
+        f"• Bekleyen VIP başvurusu: {tenant_pending + legacy_pending}\n"
+        f"• 7 gün içinde lisansı bitecek: {expiring}\n\n"
+        "💰 TAHSİLAT\n"
+        f"• Bugün: {today_total:,.2f} TL ({today_count} ödeme)\n"
+        f"• Bu ay: {month_total:,.2f} TL ({month_count} ödeme)\n"
+        f"• Bekleyen müşteri ödemesi: {pending_sales}\n\n"
         "Bilgiler veritabanından yenilendi. Kanal üye sayılarının canlı sıralaması ayrı menüdedir."
     )
 
