@@ -877,9 +877,10 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
         with connect() as c:
             matches = c.execute("""
                 SELECT DISTINCT user_id FROM (
-                    SELECT user_id FROM tenant_admins
-                    WHERE status='active' AND lower(replace(coalesce((SELECT owner_username
-                        FROM tenants WHERE tenants.tenant_id=tenant_admins.tenant_id),''),'@',''))=lower(?)
+                    SELECT a.user_id FROM tenant_admins a
+                    JOIN tenants t ON t.tenant_id=a.tenant_id
+                    WHERE a.role='owner' AND a.status='active'
+                      AND lower(replace(coalesce(t.owner_username,''),'@',''))=lower(?)
                     UNION
                     SELECT user_id FROM tenant_memberships
                     WHERE lower(replace(coalesce(username,''),'@',''))=lower(?)
