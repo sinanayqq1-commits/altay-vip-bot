@@ -443,6 +443,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("🛡 Müşteri ekiplerini yönet", callback_data="tenantpanel:adminteams")],
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
+        [InlineKeyboardButton("💰 Mali durum / Tahsilat", callback_data="tenantpanel:finance")],
         [InlineKeyboardButton("🏦 MEDYA E-CAN IBAN ayarları", callback_data="tenantpanel:companyiban")],
         [InlineKeyboardButton("📈 Gelir istatistikleri", callback_data="tenantpanel:revenue")],
         [InlineKeyboardButton("🧾 Yönetici işlem geçmişi", callback_data="tenantpanel:audit")],
@@ -898,6 +899,80 @@ async def gift_trial_user_id_input(update: Update, context: ContextTypes.DEFAULT
         "Hediye deneme süresini seç:",
         reply_markup=kb
     )
+
+
+async def build_finance_overview():
+    """Summarize software-license sales and VIP member payments as separate income streams."""
+    current = now()
+    current_iso = current.isoformat()
+    day_start = current.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    with connect() as conn:
+        sales_today = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM tenant_sales WHERE status='paid' AND paid_at>=?""", (day_start,)).fetchone()
+        sales_month = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM tenant_sales WHERE status='paid' AND paid_at>=?""", (month_start,)).fetchone()
+        sales_all = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM tenant_sales WHERE status='paid'""").fetchone()
+        vip_today = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM membership_payments WHERE paid_at>=?""", (day_start,)).fetchone()
+        vip_month = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM membership_payments WHERE paid_at>=?""", (month_start,)).fetchone()
+        vip_all = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM membership_payments""").fetchone()
+        pending = conn.execute("""SELECT COUNT(*),COALESCE(SUM(amount),0)
+            FROM tenant_sales WHERE status='pending'""").fetchone()
+        expiring = conn.execute("""SELECT tenant_name,plan_name,license_expires_at
+            FROM tenants WHERE status='active' AND license_status='active'
+              AND license_expires_at>? AND license_expires_at<=?
+            ORDER BY license_expires_at LIMIT 10""",
+            (current_iso, (current + timedelta(days=7)).isoformat())).fetchall()
+        recent_sales = conn.execute("""SELECT s.sale_id,s.amount,s.paid_at,s.package_name,t.tenant_name
+            FROM tenant_sales s LEFT JOIN tenants t ON t.tenant_id=s.tenant_id
+            WHERE s.status='paid' ORDER BY s.paid_at DESC,s.sale_id DESC LIMIT 5""").fetchall()
+        recent_vip = conn.execute("""SELECT payment_id,amount,paid_at,user_id,note,membership_type
+            FROM membership_payments ORDER BY paid_at DESC,payment_id DESC LIMIT 5""").fetchall()
+
+    today_total = float(sales_today[1] or 0) + float(vip_today[1] or 0)
+    month_total = float(sales_month[1] or 0) + float(vip_month[1] or 0)
+    all_total = float(sales_all[1] or 0) + float(vip_all[1] or 0)
+    lines = [
+        "💰 MEDYAECAN | MALİ DURUM", "",
+        f"🗓 Bugün toplam tahsilat: {today_total:,.2f} TL",
+        f"   • Yazılım/lisans: {float(sales_today[1] or 0):,.2f} TL ({sales_today[0]} satış)",
+        f"   • VIP üyelik: {float(vip_today[1] or 0):,.2f} TL ({vip_today[0]} ödeme)",
+        "",
+        f"📆 Bu ay toplam tahsilat: {month_total:,.2f} TL",
+        f"   • Yazılım/lisans: {float(sales_month[1] or 0):,.2f} TL ({sales_month[0]} satış)",
+        f"   • VIP üyelik: {float(vip_month[1] or 0):,.2f} TL ({vip_month[0]} ödeme)",
+        "",
+        f"🏦 Genel toplam: {all_total:,.2f} TL",
+        f"   • Yazılım/lisans: {float(sales_all[1] or 0):,.2f} TL ({sales_all[0]} satış)",
+        f"   • VIP üyelik: {float(vip_all[1] or 0):,.2f} TL ({vip_all[0]} ödeme)",
+        "",
+        f"⏳ Bekleyen müşteri ödemesi: {pending[0]} kayıt / {float(pending[1] or 0):,.2f} TL",
+        "", "🧾 SON LİSANS TAHSİLATLARI"
+    ]
+    for row in recent_sales:
+        stamp = datetime.fromisoformat(row["paid_at"]).strftime("%d.%m.%Y")
+        lines.append(f"• {row['tenant_name'] or 'Müşteri'} — {row['amount']:,.2f} TL ({stamp})")
+    if not recent_sales:
+        lines.append("• Henüz lisans tahsilatı yok.")
+    lines += ["", "💎 SON VIP ÜYELİK ÖDEMELERİ"]
+    for row in recent_vip:
+        stamp = datetime.fromisoformat(row["paid_at"]).strftime("%d.%m.%Y")
+        note = f" — {row['note'][:45]}" if row["note"] else ""
+        lines.append(f"• ID {row['user_id']} — {row['amount']:,.2f} TL ({stamp}){note}")
+    if not recent_vip:
+        lines.append("• Henüz VIP ödeme kaydı yok.")
+    lines += ["", "📅 7 GÜN İÇİNDE YENİLENECEK LİSANSLAR"]
+    for row in expiring:
+        expiry = datetime.fromisoformat(row["license_expires_at"])
+        lines.append(f"• {row['tenant_name']} — {expiry:%d.%m.%Y}")
+    if not expiring:
+        lines.append("• Yaklaşan lisans bitişi yok.")
+    lines += ["", "Not: Yazılım lisans tahsilatları ve VIP üye ödemeleri ayrı hesaplanır; toplamları yalnızca bir kez genel toplama eklenir."]
+    return "\n".join(lines)[:3900]
 
 
 async def build_live_admin_overview():
@@ -1660,6 +1735,15 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
+
+    if q.data == "tenantpanel:finance":
+        body = await build_finance_overview()
+        await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Yenile", callback_data="tenantpanel:finance")],
+            [InlineKeyboardButton("💳 Satış / ödeme kayıtları", callback_data="tenantpanel:payments")],
+            [InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]
+        ]))
+        return
 
     if q.data == "tenantpanel:overview":
         body = await build_live_admin_overview()
