@@ -408,13 +408,30 @@ def current_tenant_id(uid, context):
         selected = context.user_data.get('selected_tenant_id')
         if selected:
             with connect() as c:
-                if c.execute('SELECT 1 FROM tenants WHERE tenant_id=? AND status=\'active\'', (selected,)).fetchone(): return selected
+                if c.execute("SELECT 1 FROM tenants WHERE tenant_id=? AND status='active'", (selected,)).fetchone():
+                    return selected
         return 'legacy_single'
-    ids = tenant_ids_for_user(uid)
-    selected = context.user_data.get('selected_tenant_id')
-    if selected in ids: return selected
-    return ids[0] if len(ids) == 1 else None
 
+    permissions = tenant_permissions(uid)
+    ids = list(dict.fromkeys(str(row['tenant_id']) for row in permissions))
+    selected = context.user_data.get('selected_tenant_id')
+    if selected in ids:
+        return selected
+
+    # Prefer the single business the user owns, even if team permissions
+    # also grant access to other tenants.
+    owned_ids = list(dict.fromkeys(
+        str(row['tenant_id']) for row in permissions if row['role'] == 'owner'
+    ))
+    if len(owned_ids) == 1:
+        context.user_data['selected_tenant_id'] = owned_ids[0]
+        return owned_ids[0]
+
+    if len(ids) == 1:
+        context.user_data['selected_tenant_id'] = ids[0]
+        return ids[0]
+
+    return None
 
 def tenant_panel_keyboard():
     return InlineKeyboardMarkup([
@@ -865,7 +882,7 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin(uid):
         tid = current_tenant_id(uid, context)
         if not tid:
-            await update.message.reply_text('Birden fazla müşteride yetkin var. /musterisec MUSTERI_ID kullan.')
+            await update.message.reply_text('Birden fazla müşteri hesabına erişimin var. İşletmeni seçmek için /musterisec yazıp listeden seçim yap.')
             return
         await update.message.reply_text(
             '🏢 MEDYAECAN MÜŞTERİ YÖNETİM PANELİ\n\n'
