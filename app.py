@@ -420,6 +420,7 @@ def tenant_panel_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('👥 Üyelerim', callback_data='tenantpanel:members'), InlineKeyboardButton('⏳ Başvurularım', callback_data='tenantpanel:pending')],
         [InlineKeyboardButton('📡 Kanallarım', callback_data='tenantpanel:channels'), InlineKeyboardButton('💳 Ödemelerim', callback_data='tenantpanel:payments')],
+        [InlineKeyboardButton('🏆 Kanal üye sıralamam', callback_data='tenantpanel:channelrank')],
         [InlineKeyboardButton('📣 Otomatik duyurularım', callback_data='tenantpanel:autoposts')],
         [InlineKeyboardButton('🏦 IBAN bilgilerim', callback_data='tenantpanel:myiban')],
         [InlineKeyboardButton('🎨 Marka ve görünüm ayarları', callback_data='tenantpanel:branding')],
@@ -437,6 +438,7 @@ def admin_panel_keyboard():
         [InlineKeyboardButton("👥 VIP üyeler", callback_data="tenantpanel:members"),
          InlineKeyboardButton("⏳ Bekleyen başvurular", callback_data="tenantpanel:pending")],
         [InlineKeyboardButton("🏢 Müşteri ve kanallar", callback_data="tenantpanel:channels")],
+        [InlineKeyboardButton("🏆 En çok üyeli kanallar (Genel)", callback_data="tenantpanel:channelrank")],
         [InlineKeyboardButton("🛡 Müşteri ekiplerini yönet", callback_data="tenantpanel:adminteams")],
         [InlineKeyboardButton("📅 Yaklaşan üyelik bitişleri", callback_data="tenantpanel:expiring")],
         [InlineKeyboardButton("💳 Ödeme takibi", callback_data="tenantpanel:payments")],
@@ -919,6 +921,41 @@ def scoped_channel_filter(scope, column="channel_id"):
     return f" AND {column} IN ({','.join('?' for _ in scope)})", tuple(scope)
 
 
+async def build_channel_rank_text(bot, tenant_id=None, scope=None):
+    """Fetch live Telegram member counts, restricted to the requested tenant/channel scope."""
+    sql = """SELECT channel_id,tenant_id,channel_name,channel_type
+             FROM tenant_channels WHERE status='active'"""
+    params = []
+    if tenant_id is not None:
+        sql += " AND tenant_id=?"
+        params.append(tenant_id)
+    if scope is not None:
+        if not scope:
+            return "Bu kapsamda görüntülenebilecek kanal yok."
+        sql += f" AND channel_id IN ({','.join('?' for _ in scope)})"
+        params.extend(scope)
+    sql += " ORDER BY channel_name"
+    with connect() as conn:
+        channels = conn.execute(sql, tuple(params)).fetchall()
+    if not channels:
+        return "Henüz aktif kanal kaydı bulunmuyor."
+    ranked = []
+    for row in channels:
+        try:
+            count = await bot.get_chat_member_count(chat_id=int(row["channel_id"]))
+            ranked.append((int(count), row["channel_name"], row["channel_type"]))
+        except Exception:
+            log.info("Kanal üye sayısı okunamadı: %s", row["channel_id"])
+            ranked.append((None, row["channel_name"], row["channel_type"]))
+    ranked.sort(key=lambda item: (-1 if item[0] is None else item[0]), reverse=True)
+    lines = ["🏆 CANLI KANAL ÜYE SIRALAMASI", ""]
+    for index, (count, name, kind) in enumerate(ranked[:30], 1):
+        count_text = f"{count:,}" if count is not None else "Okunamadı"
+        lines.append(f"{index}. {name} — {count_text} üye")
+    lines += ["", "Not: Sayılar Telegram'dan anlık alınır. Okunamayan kanallarda botun yönetici/erişim iznini kontrol edin."]
+    return "\n".join(lines)[:3900]
+
+
 async def tenant_customer_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
@@ -929,7 +966,14 @@ async def tenant_customer_panel_callback(update: Update, context: ContextTypes.D
     scope = tenant_channel_scope(uid, tid)
     await q.answer()
 
-    if q.data == 'tenantpanel:home':
+    if q.data == 'tenantpanel:channelrank':
+        if not manager_has_permission(uid, tid, None, 'members'):
+            await q.answer('Kanal istatistiklerini görme yetkin yok.', show_alert=True)
+            return
+        body = await build_channel_rank_text(context.bot, tenant_id=tid, scope=scope)
+        await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Müşteri paneli', callback_data='tenantpanel:home')]]))
+
+    elif q.data == 'tenantpanel:home':
         await q.edit_message_text('MÜŞTERİ YÖNETİM PANELİ', reply_markup=tenant_panel_keyboard())
 
     elif q.data == 'tenantpanel:autoposts':
@@ -1532,6 +1576,11 @@ async def tenant_panel_callbacks(update: Update, context: ContextTypes.DEFAULT_T
         await tenant_customer_panel_callback(update, context)
         return
     await q.answer()
+
+    if q.data == "tenantpanel:channelrank":
+        body = await build_channel_rank_text(context.bot)
+        await q.edit_message_text(body, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Ana panel", callback_data="tenantpanel:home")]]))
+        return
 
     if q.data == "tenantpanel:companyiban":
         if not admin(uid):
